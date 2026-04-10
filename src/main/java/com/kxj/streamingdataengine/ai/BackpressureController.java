@@ -90,6 +90,7 @@ public class BackpressureController {
      * 记录处理样本
      */
     public void recordSample(StreamRecord<?> record, long processingLatencyMs) {
+        // [kxj: 背压控制器采样 - 收集延迟和队列大小用于动态调整限流]
         Sample sample = new Sample(
                 System.currentTimeMillis(),
                 processingLatencyMs,
@@ -103,7 +104,7 @@ public class BackpressureController {
         // 更新统计
         statistics.update(processingLatencyMs, monitoredQueueSize.get());
 
-        // 评估并调整背压
+        // [kxj: 评估系统压力并动态调整限流，确保系统稳定运行]
         evaluateAndAdjust();
     }
 
@@ -184,7 +185,7 @@ public class BackpressureController {
             pressureScore += 1;
         }
 
-        // 根据评分确定等级
+        // [kxj: 压力评分转换 - 0-1分NORMAL, 1-2分MEDIUM, 3-4分HIGH, 5+分CRITICAL]
         if (pressureScore >= 5) {
             return PressureLevel.CRITICAL;
         } else if (pressureScore >= 3) {
@@ -199,6 +200,7 @@ public class BackpressureController {
      * 应用压力控制
      */
     private void applyPressureControl(PressureLevel level, PressureLevel oldLevel) {
+        // [kxj: 根据压力等级设置对应限流阈值，NORMAL时重置统计恢复最佳状态]
         int newLimit;
 
         switch (level) {

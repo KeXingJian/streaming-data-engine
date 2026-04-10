@@ -1,62 +1,31 @@
 package com.kxj.streamingdataengine.core.model;
 
 import lombok.Builder;
-import lombok.Getter;
-import lombok.ToString;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.Map;
 
 /**
  * 流数据记录
  * 支持事件时间和处理时间
+ *
+ * @param key            记录唯一标识
+ * @param value          实际数据
+ * @param eventTime      事件时间（业务时间）
+ * @param processingTime 处理时间（系统时间）
+ * @param ingestionTime  数据到达时间
+ * @param attributes     扩展属性
+ * @param partition      数据分区
+ * @param sequenceNumber 序列号（用于排序和去重）
  */
-@Getter
 @Builder
-@ToString
-public class StreamRecord<T> implements Serializable, Comparable<StreamRecord<T>> {
+public record StreamRecord<T>(String key, T value, long eventTime, long processingTime, long ingestionTime,
+                              Map<String, Object> attributes, int partition,
+                              long sequenceNumber) implements Serializable, Comparable<StreamRecord<T>> {
 
+    @Serial
     private static final long serialVersionUID = 1L;
-
-    /**
-     * 记录唯一标识
-     */
-    private final String key;
-
-    /**
-     * 实际数据
-     */
-    private final T value;
-
-    /**
-     * 事件时间（业务时间）
-     */
-    private final long eventTime;
-
-    /**
-     * 处理时间（系统时间）
-     */
-    private final long processingTime;
-
-    /**
-     * 数据到达时间
-     */
-    private final long ingestionTime;
-
-    /**
-     * 扩展属性
-     */
-    private final Map<String, Object> attributes;
-
-    /**
-     * 数据分区
-     */
-    private final int partition;
-
-    /**
-     * 序列号（用于排序和去重）
-     */
-    private final long sequenceNumber;
 
     public StreamRecord(String key, T value, long eventTime, int partition, long sequenceNumber) {
         this(key, value, eventTime, System.currentTimeMillis(), System.currentTimeMillis(),
@@ -65,14 +34,14 @@ public class StreamRecord<T> implements Serializable, Comparable<StreamRecord<T>
 
     public StreamRecord(String key, T value, long eventTime, long processingTime, long ingestionTime,
                         Map<String, Object> attributes, int partition, long sequenceNumber) {
-        this.key = key;
-        this.value = value;
-        this.eventTime = eventTime;
-        this.processingTime = processingTime;
-        this.ingestionTime = ingestionTime;
-        this.attributes = attributes != null ? Map.copyOf(attributes) : Map.of();
-        this.partition = partition;
-        this.sequenceNumber = sequenceNumber;
+        this.key = key;                          // 记录唯一标识，用于分区路由和状态存储
+        this.value = value;                      // 实际业务数据，转换/聚合的操作对象
+        this.eventTime = eventTime;              // 事件时间（业务发生时间），Watermark计算和窗口分配的基础
+        this.processingTime = processingTime;    // 处理时间（系统当前时间），用于延迟监控和超时判断
+        this.ingestionTime = ingestionTime;      // 摄入时间（数据到达系统时间），用于端到端延迟分析
+        this.attributes = attributes != null ? Map.copyOf(attributes) : Map.of();  // 扩展属性，传递上下文元数据
+        this.partition = partition;              // 数据分区号，支持并行处理和分区级聚合
+        this.sequenceNumber = sequenceNumber;    // 全局序列号，用于排序、去重和Exactly-Once语义
     }
 
     /**

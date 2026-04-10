@@ -57,6 +57,7 @@ public class AnomalyDetector {
      * 记录流量数据点
      */
     public void recordSample(double value) {
+        // [kxj: 异常检测器采样 - 维护滑动窗口统计，支持3-sigma/变化率/周期性三种检测]
         long now = System.currentTimeMillis();
         TrafficRecord record = new TrafficRecord(now, value);
 
@@ -66,10 +67,11 @@ public class AnomalyDetector {
         // 清理过期数据
         cleanupOldRecords(now);
 
-        // 执行检测
+        // [kxj: 执行多维度异常检测，综合评分确定异常级别]
         AnomalyResult result = detect(value);
 
         if (result.isAnomaly()) {
+            log.debug("[kxj: 异常检测到] level={}, value={}, zScore={}", result.getLevel(), value, result.getZScore());
             alertHandler.onAlert(result);
         }
     }
@@ -78,7 +80,7 @@ public class AnomalyDetector {
      * 执行异常检测
      */
     private AnomalyResult detect(double currentValue) {
-        // 1. 3-sigma检测
+        // [kxj: 1. 3-sigma统计检测 - 偏离均值超过3倍标准差视为异常]
         double mean = currentStats.getMean();
         double stdDev = currentStats.getStdDev();
 
@@ -90,15 +92,15 @@ public class AnomalyDetector {
             is3SigmaAnomaly = zScore > config.getSigmaThreshold();
         }
 
-        // 2. 变化率检测
+        // [kxj: 2. 变化率检测 - 突变往往预示系统问题，权重最高(2分)]
         double changeRate = calculateChangeRate(currentValue);
         boolean isChangeRateAnomaly = Math.abs(changeRate) > config.getMaxChangeRate();
 
-        // 3. 历史同比检测
+        // [kxj: 3. 历史同比检测 - 识别周期性模式中的异常]
         double seasonalDeviation = calculateSeasonalDeviation(currentValue);
         boolean isSeasonalAnomaly = Math.abs(seasonalDeviation) > config.getSeasonalThreshold();
 
-        // 综合判断
+        // [kxj: 综合评分 - 1分MEDIUM, 2分HIGH, 3+分CRITICAL]
         int anomalyScore = 0;
         if (is3SigmaAnomaly) anomalyScore += 1;
         if (isChangeRateAnomaly) anomalyScore += 2;

@@ -78,10 +78,11 @@ public class AdaptiveWindowManager {
      * 收集事件样本
      */
     public void collectSample(StreamRecord<?> record) {
+        // [kxj: 自适应窗口采样 - 收集延迟样本用于EWMA预测和窗口参数调整]
         long latency = record.getLatency();
         latencySamples.offer(latency);
 
-        // 限制样本数量
+        // [kxj: 滑动窗口维护，保留最近MAX_SAMPLES个样本]
         while (latencySamples.size() > MAX_SAMPLES) {
             latencySamples.poll();
         }
@@ -89,7 +90,7 @@ public class AdaptiveWindowManager {
         // 更新统计
         statisticsCollector.update(record);
 
-        // 检查是否需要调整
+        // [kxj: 每10秒触发一次窗口参数自适应调整]
         long now = System.currentTimeMillis();
         if (now - lastAdjustmentTime.get() > MIN_ADJUSTMENT_INTERVAL_MS) {
             adjustWindowParameters();

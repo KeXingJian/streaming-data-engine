@@ -27,7 +27,7 @@ public class FilterOperator<T> implements StreamOperator<T> {
 
     @Override
     public List<StreamRecord<T>> processElement(StreamRecord<T> record) {
-        if (predicate.test(record.getValue())) {
+        if (predicate.test(record.value())) {
             return List.of(record);
         }
         return List.of();

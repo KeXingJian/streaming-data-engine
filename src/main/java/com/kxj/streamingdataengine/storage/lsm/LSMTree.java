@@ -88,6 +88,7 @@ public class LSMTree<K extends Comparable<K>, V> {
     public void put(K key, V value) {
         lock.writeLock().lock();
         try {
+            // [kxj: LSM-Tree写入流程 - 先写WAL保证持久化，再写MemTable]
             // 写入WAL
             if (wal != null) {
                 wal.append(key, value);
@@ -97,8 +98,9 @@ public class LSMTree<K extends Comparable<K>, V> {
             long seq = sequenceNumber.incrementAndGet();
             activeMemTable.put(key, value, seq);
 
-            // 检查是否需要刷盘
+            // [kxj: MemTable达到阈值时触发刷盘，生成不可变Segment]
             if (activeMemTable.size() >= memTableSize) {
+                log.debug("[kxj: MemTable刷盘] 当前大小={}", activeMemTable.size());
                 flushMemTable();
             }
         } finally {
@@ -126,6 +128,7 @@ public class LSMTree<K extends Comparable<K>, V> {
     public Optional<V> get(K key) {
         lock.readLock().lock();
         try {
+            // [kxj: LSM-Tree查询顺序 - 活跃MemTable → 不可变MemTable → 磁盘Segment]
             // 1. 查活跃MemTable
             Optional<Entry<V>> entry = activeMemTable.get(key);
             if (entry.isPresent()) {

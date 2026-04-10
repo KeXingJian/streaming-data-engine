@@ -3,6 +3,7 @@ package com.kxj.streamingdataengine.window.trigger;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.window.Window;
 
+import java.io.Serial;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -12,6 +13,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class CountTrigger<T> implements Trigger<T> {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     private final long maxCount;

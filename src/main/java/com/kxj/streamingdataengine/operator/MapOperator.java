@@ -29,7 +29,7 @@ public class MapOperator<T, R> implements StreamOperator<R> {
     @SuppressWarnings("unchecked")
     public List<StreamRecord<R>> processElement(StreamRecord<R> record) {
         // 实际类型是T，需要转换
-        T value = (T) record.getValue();
+        T value = (T) record.value();
         R result = mapper.apply(value);
         return List.of(record.withValue(result));
     }

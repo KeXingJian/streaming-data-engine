@@ -1,23 +1,16 @@
 package com.kxj.streamingdataengine.execution;
 
-import com.kxj.streamingdataengine.aggregation.AggregateFunction;
-import com.kxj.streamingdataengine.aggregation.MergeTreeAggregator;
 import com.kxj.streamingdataengine.ai.AdaptiveWindowManager;
 import com.kxj.streamingdataengine.ai.AnomalyDetector;
 import com.kxj.streamingdataengine.ai.BackpressureController;
 import com.kxj.streamingdataengine.core.model.*;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
-import com.kxj.streamingdataengine.window.Window;
-import com.kxj.streamingdataengine.window.WindowState;
-import com.kxj.streamingdataengine.window.trigger.Trigger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 
 /**
  * 流处理执行引擎
@@ -70,17 +63,19 @@ public class ExecutionEngine {
             return;
         }
         running = true;
-        log.info("ExecutionEngine started with parallelism={}", parallelism);
+        // [kxj: 执行引擎启动 - 根据配置启动虚拟线程池、Watermark生成、自适应调整和背压监控]
+        log.info("[kxj: 执行引擎启动] parallelism={}, 自适应窗口={}, 背压控制={}",
+                parallelism, enableAdaptiveWindow, enableBackpressure);
 
-        // 启动Watermark生成器
+        // [kxj: 启动Watermark生成器，按固定间隔推进事件时间]
         executorService.submit(this::generateWatermarks);
 
-        // 启动自适应调整器
+        // [kxj: 启动自适应窗口调整器，基于延迟样本动态优化窗口参数]
         if (enableAdaptiveWindow) {
             executorService.submit(this::adaptiveAdjustmentLoop);
         }
 
-        // 启动背压监控
+        // [kxj: 启动背压监控，根据系统负载动态限流]
         if (enableBackpressure) {
             executorService.submit(this::backpressureMonitorLoop);
         }
@@ -106,8 +101,8 @@ public class ExecutionEngine {
         }
 
         // 处理Watermark
-        if (record.getValue() instanceof Watermark) {
-            Watermark watermark = (Watermark) record.getValue();
+        if (record.value() instanceof Watermark) {
+            Watermark watermark = (Watermark) record.value();
             watermarkManager.updateWatermark(watermark);
 
             // 通知所有算子
@@ -143,7 +138,7 @@ public class ExecutionEngine {
         if (sink != null) {
             for (StreamRecord<T> r : results) {
                 try {
-                    sink.write(r.getValue());
+                    sink.write(r.value());
                 } catch (Exception e) {
                     log.error("Sink write failed", e);
                 }

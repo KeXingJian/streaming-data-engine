@@ -80,30 +80,33 @@ public class MergeTreeAggregator<K extends Comparable<K>, T, ACC, R> {
      * 插入数据（增量聚合）
      */
     public void insert(StreamRecord<T> record) {
-        String partitionKey = partitionKeyExtractor.extract(record.getValue());
-        K primaryKey = primaryKeyExtractor.extract(record.getValue());
 
+        // [kxj: MergeTree增量聚合 - 按分区键和主键预聚合，减少存储和计算量]
+        String partitionKey = partitionKeyExtractor.extract(record.value());
+        K primaryKey = primaryKeyExtractor.extract(record.value());
+
+        // [kxj: 按分区键获取或创建LSMTree分区，支持分区级并行写入]
         LSMTree<CompositeKey<K>, AggregatedValue<T, ACC, R>> partition =
                 partitions.computeIfAbsent(partitionKey, k -> new LSMTree<>());
 
-        CompositeKey<K> key = new CompositeKey<>(primaryKey, record.getEventTime());
+        CompositeKey<K> key = new CompositeKey<>(primaryKey, record.eventTime());
 
-        // 查询现有聚合值
+        // [kxj: 查询同主键现有聚合值，若存在则增量更新，不存在则创建新累加器]
         Optional<AggregatedValue<T, ACC, R>> existing = partition.get(key);
         ACC accumulator;
 
         if (existing.isPresent()) {
             accumulator = existing.get().accumulator;
-            aggregateFunction.add(record.getValue(), accumulator);
+            aggregateFunction.add(record.value(), accumulator);
             aggregatedRecords.incrementAndGet();
         } else {
             accumulator = aggregateFunction.createAccumulator();
-            aggregateFunction.add(record.getValue(), accumulator);
+            aggregateFunction.add(record.value(), accumulator);
         }
 
         // 写入新的聚合值
         AggregatedValue<T, ACC, R> newValue = new AggregatedValue<>(
-                record.getValue(), accumulator, record.getEventTime()
+                record.value(), accumulator, record.eventTime()
         );
         partition.put(key, newValue);
 
@@ -119,7 +122,7 @@ public class MergeTreeAggregator<K extends Comparable<K>, T, ACC, R> {
         Map<String, List<StreamRecord<T>>> grouped = new HashMap<>();
 
         for (StreamRecord<T> record : records) {
-            String partitionKey = partitionKeyExtractor.extract(record.getValue());
+            String partitionKey = partitionKeyExtractor.extract(record.value());
             grouped.computeIfAbsent(partitionKey, k -> new ArrayList<>()).add(record);
         }
 
@@ -128,7 +131,7 @@ public class MergeTreeAggregator<K extends Comparable<K>, T, ACC, R> {
             // 按主键预聚合
             Map<K, List<StreamRecord<T>>> byKey = new HashMap<>();
             for (StreamRecord<T> record : entry.getValue()) {
-                K key = primaryKeyExtractor.extract(record.getValue());
+                K key = primaryKeyExtractor.extract(record.value());
                 byKey.computeIfAbsent(key, k -> new ArrayList<>()).add(record);
             }
 
@@ -139,9 +142,9 @@ public class MergeTreeAggregator<K extends Comparable<K>, T, ACC, R> {
                 T firstValue = null;
 
                 for (StreamRecord<T> record : keyEntry.getValue()) {
-                    if (firstValue == null) firstValue = record.getValue();
-                    aggregateFunction.add(record.getValue(), accumulator);
-                    maxTimestamp = Math.max(maxTimestamp, record.getEventTime());
+                    if (firstValue == null) firstValue = record.value();
+                    aggregateFunction.add(record.value(), accumulator);
+                    maxTimestamp = Math.max(maxTimestamp, record.eventTime());
                 }
 
                 LSMTree<CompositeKey<K>, AggregatedValue<T, ACC, R>> partition =

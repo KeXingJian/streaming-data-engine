@@ -30,8 +30,6 @@ public class DataStreamImpl<T> implements DataStream<T> {
     private final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
     private WatermarkStrategy<T> watermarkStrategy;
 
-    private ExecutionEngine engine;
-
     // 构造源流
     public DataStreamImpl(String jobName, StreamConfig config, DataSource<T> source) {
         this.jobName = jobName;
@@ -61,8 +59,10 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
     @Override
     public <R> DataStream<R> map(Function<T, R> mapper) {
+        // [kxj: map转换采用不可变设计，复制转换链并添加新转换，返回新流实例]
         List<Function<?, ?>> newTransformations = new ArrayList<>(transformations);
         newTransformations.add(mapper);
+        log.debug("[kxj: map转换] 当前转换链长度={}, 新增map转换", newTransformations.size());
         return new DataStreamImpl<>(jobName + "_map", config, source, newTransformations);
     }
 
@@ -118,13 +118,15 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
     @Override
     public void execute() {
-        engine = new ExecutionEngine(
+        // [kxj: 执行引擎初始化，根据配置启动并行度、自适应窗口和背压控制]
+        ExecutionEngine engine = new ExecutionEngine(
                 config.getParallelism(),
                 java.time.Duration.ofMillis(config.getWatermarkInterval()),
                 config.isEnableAdaptiveWindow(),
                 config.isEnableBackpressure()
         );
 
+        log.info("[kxj: 执行流] jobName={}, 转换链长度={}, sinks数量={}", jobName, transformations.size(), sinks.size());
         engine.start();
 
         try {
@@ -136,11 +138,14 @@ public class DataStreamImpl<T> implements DataStream<T> {
             // 处理数据
             DataSink<T> firstSink = sinks.isEmpty() ? null : sinks.get(0);
 
+            int processedCount = 0;
+            int filteredCount = 0;
+            // [kxj: 从source读取数据，顺序应用转换链，过滤null值，写入sink]
             while (source.hasMore()) {
                 StreamRecord<?> record = source.nextRecord();
                 if (record != null) {
-                    // 应用所有转换
-                    Object value = record.getValue();
+                    // [kxj: 应用转换链 - 每个Function依次处理，null表示被过滤]
+                    Object value = record.value();
                     boolean filtered = false;
                     for (Function<?, ?> f : transformations) {
                         @SuppressWarnings("unchecked")
@@ -156,12 +161,16 @@ public class DataStreamImpl<T> implements DataStream<T> {
                         T result = (T) value;
                         try {
                             firstSink.write(result);
+                            processedCount++;
                         } catch (Exception e) {
-                            log.error("Failed to write to sink: {}", e.getMessage());
+                            log.error("[kxj: Sink写入失败] 原因: {}", e.getMessage());
                         }
+                    } else if (filtered) {
+                        filteredCount++;
                     }
                 }
             }
+            log.info("[kxj: 执行完成] 处理记录数={}, 过滤记录数={}", processedCount, filteredCount);
 
         } catch (Exception e) {
             log.error("Stream execution failed", e);
@@ -189,6 +198,14 @@ public class DataStreamImpl<T> implements DataStream<T> {
                 .startTime(startTime)
                 .endTime(System.currentTimeMillis())
                 .build();
+    }
+
+    public WatermarkStrategy<T> getWatermarkStrategy() {
+        return watermarkStrategy;
+    }
+
+    public void setWatermarkStrategy(WatermarkStrategy<T> watermarkStrategy) {
+        this.watermarkStrategy = watermarkStrategy;
     }
 
     // ========== 内部类实现 ==========

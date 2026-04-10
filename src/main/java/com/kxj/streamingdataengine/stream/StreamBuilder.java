@@ -36,6 +36,7 @@ public class StreamBuilder {
      * 从集合创建流（测试用）
      */
     public <T> DataStreamImpl<T> fromCollection(List<T> data) {
+        //为数据增加序列号和时间
         List<StreamRecord<T>> records = new ArrayList<>();
         long seq = 0;
         for (T item : data) {
