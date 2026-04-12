@@ -10,53 +10,14 @@ import java.time.Duration;
 @Data
 public class StreamConfig {
 
-    /**
-     * 并行度
-     */
-    private int parallelism = Runtime.getRuntime().availableProcessors();
-
-    /**
-     * Watermark生成间隔
-     */
-    private long watermarkInterval = 200;
-
-    /**
-     * 是否启用自适应窗口
-     */
-    private boolean enableAdaptiveWindow = true;
-
-    /**
-     * 是否启用背压控制
-     */
-    private boolean enableBackpressure = true;
-
-    /**
-     * 缓冲区大小
-     */
-    private int bufferSize = 10000;
-
-    /**
-     * 最大并发算子数
-     */
-    private int maxConcurrentOperators = 100;
-
-    /**
-     * 检查点间隔
-     */
-    private Duration checkpointInterval = Duration.ofMinutes(1);
-
-    /**
-     * 最大乱序时间
-     */
-    private Duration maxOutOfOrderness = Duration.ofSeconds(5);
-
-    /**
-     * 允许迟到时间
-     */
-    private Duration allowedLateness = Duration.ZERO;
-
-    /**
-     * 自动水印策略
-     */
-    private boolean autoWatermark = true;
+    private int parallelism = Runtime.getRuntime().availableProcessors();         // 并行度，同时处理任务的线程数
+    private long watermarkInterval = 200;                                         // Watermark生成间隔（毫秒）
+    private boolean enableAdaptiveWindow = true;                                  // 是否启用自适应窗口动态调整
+    private boolean enableBackpressure = true;                                    // 是否启用背压控制防止系统过载
+    private int bufferSize = 10000;                                               // 缓冲区大小
+    private int maxConcurrentOperators = 100;                                     // 最大并发算子数
+    private Duration checkpointInterval = Duration.ofMinutes(1);                  // 检查点间隔
+    private Duration maxOutOfOrderness = Duration.ofSeconds(5);                   // 最大乱序时间
+    private Duration allowedLateness = Duration.ZERO;                             // 允许迟到时间
+    private boolean autoWatermark = true;                                         // 自动水印策略
 }

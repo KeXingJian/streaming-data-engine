@@ -1,16 +1,25 @@
 package com.kxj.streamingdataengine.stream;
 
 import com.kxj.streamingdataengine.aggregation.AggregateFunction;
-import com.kxj.streamingdataengine.core.model.*;
+import com.kxj.streamingdataengine.core.model.DataSink;
+import com.kxj.streamingdataengine.core.model.DataSource;
+import com.kxj.streamingdataengine.core.model.StreamRecord;
+import com.kxj.streamingdataengine.core.model.StreamResult;
+import com.kxj.streamingdataengine.core.model.DataStream;
+import com.kxj.streamingdataengine.core.model.KeyedStream;
+import com.kxj.streamingdataengine.core.model.WindowedStream;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
 import com.kxj.streamingdataengine.execution.ExecutionEngine;
 import com.kxj.streamingdataengine.window.Window;
 import com.kxj.streamingdataengine.window.trigger.Trigger;
 import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -28,8 +37,6 @@ public class DataStreamImpl<T> implements DataStream<T> {
     private final List<Function<?, ?>> transformations;
 
     private final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
-    private WatermarkStrategy<T> watermarkStrategy;
-
     // 构造源流
     public DataStreamImpl(String jobName, StreamConfig config, DataSource<T> source) {
         this.jobName = jobName;
@@ -84,17 +91,6 @@ public class DataStreamImpl<T> implements DataStream<T> {
     }
 
     @Override
-    public DataStream<T> addOperator(StreamOperator<T> operator) {
-        return this;
-    }
-
-    @Override
-    public DataStream<T> assignTimestampsAndWatermarks(WatermarkStrategy<T> strategy) {
-        this.watermarkStrategy = strategy;
-        return this;
-    }
-
-    @Override
     public DataStream<T> addSink(DataSink<T> sink) {
         sinks.add(sink);
         return this;
@@ -121,7 +117,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
         // [kxj: 执行引擎初始化，根据配置启动并行度、自适应窗口和背压控制]
         ExecutionEngine engine = new ExecutionEngine(
                 config.getParallelism(),
-                java.time.Duration.ofMillis(config.getWatermarkInterval()),
+                Duration.ofMillis(config.getWatermarkInterval()),
                 config.isEnableAdaptiveWindow(),
                 config.isEnableBackpressure()
         );
@@ -135,38 +131,59 @@ public class DataStreamImpl<T> implements DataStream<T> {
                 sink.open();
             }
 
-            // 处理数据
-            DataSink<T> firstSink = sinks.isEmpty() ? null : sinks.get(0);
+            // [kxj: 将转换函数链封装为StreamOperator，供执行引擎统一调度]
+            List<StreamOperator<T>> operators = new ArrayList<>();
+            for (Function<?, ?> f : transformations) {
+                @SuppressWarnings("unchecked")
+                Function<Object, Object> func = (Function<Object, Object>) f;
+                operators.add(new StreamOperator<T>() {
+                    @Override
+                    public String getName() {
+                        return "transform";
+                    }
+
+                    @Override
+                    public List<StreamRecord<T>> processElement(StreamRecord<T> record) {
+                        Object result = func.apply(record.value());
+                        if (result == null) {
+                            return Collections.emptyList();
+                        }
+                        @SuppressWarnings("unchecked")
+                        T typed = (T) result;
+                        return List.of(record.withValue(typed));
+                    }
+
+                    @Override
+                    public List<StreamRecord<T>> processWatermark(com.kxj.streamingdataengine.core.model.Watermark watermark) {
+                        return Collections.emptyList();
+                    }
+                });
+            }
+
+            // [kxj: 多sink聚合为复合sink，适配engine单sink接口]
+            DataSink<T> combinedSink = sinks.isEmpty() ? null : value -> {
+                for (DataSink<T> sink : sinks) {
+                    try {
+                        sink.write(value);
+                    } catch (Exception e) {
+                        log.error("[kxj: Sink写入失败] 原因: {}", e.getMessage());
+                    }
+                }
+            };
 
             int processedCount = 0;
             int filteredCount = 0;
-            // [kxj: 从source读取数据，顺序应用转换链，过滤null值，写入sink]
+            // [kxj: 从source读取数据，交由engine处理，应用算子链并写入sink]
             while (source.hasMore()) {
                 StreamRecord<?> record = source.nextRecord();
                 if (record != null) {
-                    // [kxj: 应用转换链 - 每个Function依次处理，null表示被过滤]
-                    Object value = record.value();
-                    boolean filtered = false;
-                    for (Function<?, ?> f : transformations) {
-                        @SuppressWarnings("unchecked")
-                        Function<Object, Object> func = (Function<Object, Object>) f;
-                        value = func.apply(value);
-                        if (value == null) {
-                            filtered = true;
-                            break;
-                        }
-                    }
-                    if (!filtered && firstSink != null) {
-                        @SuppressWarnings("unchecked")
-                        T result = (T) value;
-                        try {
-                            firstSink.write(result);
-                            processedCount++;
-                        } catch (Exception e) {
-                            log.error("[kxj: Sink写入失败] 原因: {}", e.getMessage());
-                        }
-                    } else if (filtered) {
+                    @SuppressWarnings("unchecked")
+                    StreamRecord<T> typedRecord = (StreamRecord<T>) record;
+                    List<StreamRecord<T>> results = engine.processRecord(typedRecord, operators, combinedSink);
+                    if (results.isEmpty()) {
                         filteredCount++;
+                    } else {
+                        processedCount += results.size();
                     }
                 }
             }
@@ -200,58 +217,72 @@ public class DataStreamImpl<T> implements DataStream<T> {
                 .build();
     }
 
-    public WatermarkStrategy<T> getWatermarkStrategy() {
-        return watermarkStrategy;
-    }
-
-    public void setWatermarkStrategy(WatermarkStrategy<T> watermarkStrategy) {
-        this.watermarkStrategy = watermarkStrategy;
-    }
-
     // ========== 内部类实现 ==========
 
-    private static class KeyedStreamImpl<T, K> implements KeyedStream<T, K> {
-        private final DataStreamImpl<T> parent;
-        private final Function<T, K> keyExtractor;
+    private record KeyedStreamImpl<T, K>(DataStreamImpl<T> parent,
+                                         Function<T, K> keyExtractor) implements KeyedStream<T, K> {
 
-        KeyedStreamImpl(DataStreamImpl<T> parent, Function<T, K> keyExtractor) {
-            this.parent = parent;
-            this.keyExtractor = keyExtractor;
+        @Override
+            public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
+                return parent.map(t -> aggregateFunction.getResult(aggregateFunction.createAccumulator()));
+            }
+
+            @Override
+            public DataStream<T> reduce(BinaryOperator<T> reducer) {
+                return parent;
+            }
+
+            @Override
+            public WindowedStream<T> window(Window.Assigner<T> assigner) {
+                return new WindowedStreamImpl<>(parent, assigner);
+            }
+
+            // 委托方法
+            @Override
+            public String getId() {
+                return parent.getId();
+            }
+
+        @Override
+        public int getParallelism() {
+            return parent.getParallelism();
         }
 
         @Override
-        public Function<T, K> getKeyExtractor() {
-            return keyExtractor;
+        public <R> DataStream<R> map(Function<T, R> mapper) {
+            return parent.map(mapper);
         }
 
         @Override
-        public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-            return parent.map(t -> aggregateFunction.getResult(aggregateFunction.createAccumulator()));
+        public DataStream<T> filter(Predicate<T> predicate) {
+            return parent.filter(predicate);
         }
 
         @Override
-        public DataStream<T> reduce(java.util.function.BinaryOperator<T> reducer) {
-            return parent;
+        public <K2> KeyedStream<T, K2> keyBy(Function<T, K2> keyExtractor) {
+            return parent.keyBy(keyExtractor);
         }
 
         @Override
-        public WindowedStream<T> window(Window.Assigner<T> assigner) {
-            return new WindowedStreamImpl<>(parent, assigner);
+        public DataStream<T> addSink(DataSink<T> sink) {
+            return parent.addSink(sink);
         }
 
-        // 委托方法
-        @Override public String getId() { return parent.getId(); }
-        @Override public int getParallelism() { return parent.getParallelism(); }
-        @Override public <R> DataStream<R> map(Function<T, R> mapper) { return parent.map(mapper); }
-        @Override public DataStream<T> filter(Predicate<T> predicate) { return parent.filter(predicate); }
-        @Override public <K2> KeyedStream<T, K2> keyBy(Function<T, K2> keyExtractor) { return parent.keyBy(keyExtractor); }
-        @Override public DataStream<T> addOperator(StreamOperator<T> operator) { return parent.addOperator(operator); }
-        @Override public DataStream<T> assignTimestampsAndWatermarks(WatermarkStrategy<T> strategy) { return parent.assignTimestampsAndWatermarks(strategy); }
-        @Override public DataStream<T> addSink(DataSink<T> sink) { return parent.addSink(sink); }
-        @Override public List<T> collect() { return parent.collect(); }
-        @Override public void execute() { parent.execute(); }
-        @Override public StreamResult executeAndGet() { return parent.executeAndGet(); }
-    }
+        @Override
+        public List<T> collect() {
+            return parent.collect();
+        }
+
+        @Override
+        public void execute() {
+            parent.execute();
+        }
+
+        @Override
+        public StreamResult executeAndGet() {
+            return parent.executeAndGet();
+        }
+        }
 
     private static class WindowedStreamImpl<T> implements WindowedStream<T> {
         private final DataStreamImpl<T> parent;
@@ -316,8 +347,6 @@ public class DataStreamImpl<T> implements DataStream<T> {
         @Override public DataStream<T> filter(Predicate<T> predicate) { return parent.filter(predicate); }
         @Override public <K> KeyedStream<T, K> keyBy(Function<T, K> keyExtractor) { return parent.keyBy(keyExtractor); }
         @Override public WindowedStream<T> window(Window.Assigner<T> assigner) { return parent.window(assigner); }
-        @Override public DataStream<T> addOperator(StreamOperator<T> operator) { return parent.addOperator(operator); }
-        @Override public DataStream<T> assignTimestampsAndWatermarks(WatermarkStrategy<T> strategy) { return parent.assignTimestampsAndWatermarks(strategy); }
         @Override public DataStream<T> addSink(DataSink<T> sink) { return parent.addSink(sink); }
         @Override public List<T> collect() { return parent.collect(); }
         @Override public void execute() { parent.execute(); }

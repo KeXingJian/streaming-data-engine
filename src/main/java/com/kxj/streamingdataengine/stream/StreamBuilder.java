@@ -3,7 +3,6 @@ package com.kxj.streamingdataengine.stream;
 import com.kxj.streamingdataengine.core.model.DataSink;
 import com.kxj.streamingdataengine.core.model.DataSource;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
-import com.kxj.streamingdataengine.core.model.WatermarkStrategy;
 import lombok.RequiredArgsConstructor;
 
 import java.util.ArrayList;

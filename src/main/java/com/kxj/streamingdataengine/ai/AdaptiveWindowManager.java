@@ -27,42 +27,15 @@ public class AdaptiveWindowManager {
     private static final long MAX_WINDOW_SIZE_MS = 300000; // 5分钟
     private static final double LEARNING_RATE = 0.1;
 
-    /**
-     * 当前窗口大小
-     */
     @Getter
-    private volatile Duration currentWindowSize;
-
-    /**
-     * 允许的最大乱序时间
-     */
+    private volatile Duration currentWindowSize;           // 当前窗口大小
     @Getter
-    private volatile Duration maxOutOfOrderness;
-
-    /**
-     * 历史数据统计
-     */
-    private final StatisticsCollector statisticsCollector;
-
-    /**
-     * 机器学习模型（简化版使用EWMA和启发式规则）
-     */
-    private final AdaptiveModel model;
-
-    /**
-     * 最近的事件延迟样本
-     */
-    private final Queue<Long> latencySamples;
-
-    /**
-     * 样本数量限制
-     */
-    private static final int MAX_SAMPLES = 1000;
-
-    /**
-     * 调整频率控制
-     */
-    private final AtomicLong lastAdjustmentTime;
+    private volatile Duration maxOutOfOrderness;           // 允许的最大乱序时间
+    private final StatisticsCollector statisticsCollector; // 历史数据统计
+    private final AdaptiveModel model;                     // 机器学习模型（简化版使用EWMA和启发式规则）
+    private final Queue<Long> latencySamples;              // 最近的事件延迟样本
+    private static final int MAX_SAMPLES = 1000;           // 样本数量限制
+    private final AtomicLong lastAdjustmentTime;           // 调整频率控制
     private static final long MIN_ADJUSTMENT_INTERVAL_MS = 10000; // 10秒
 
     public AdaptiveWindowManager(Duration initialWindowSize) {
@@ -88,7 +61,7 @@ public class AdaptiveWindowManager {
         }
 
         // 更新统计
-        statisticsCollector.update(record);
+        statisticsCollector.update();
 
         // [kxj: 每10秒触发一次窗口参数自适应调整]
         long now = System.currentTimeMillis();
@@ -128,11 +101,11 @@ public class AdaptiveWindowManager {
         long adjustedMs = (long) (currentMs + LEARNING_RATE * (optimalWindowSize - currentMs));
 
         // 限制在合理范围内
-        adjustedMs = Math.max(MIN_WINDOW_SIZE_MS, Math.min(MAX_WINDOW_SIZE_MS, adjustedMs));
+        adjustedMs = Math.clamp(adjustedMs, MIN_WINDOW_SIZE_MS, MAX_WINDOW_SIZE_MS);
 
         // 更新乱序容忍度
         long newOutOfOrderness = (long) (p95Latency * 1.2); // P95延迟的1.2倍
-        newOutOfOrderness = Math.max(100, Math.min(60000, newOutOfOrderness));
+        newOutOfOrderness = Math.clamp(newOutOfOrderness, 100, 60000);
 
         if (Math.abs(adjustedMs - currentMs) > currentMs * 0.1) { // 变化超过10%才更新
             currentWindowSize = Duration.ofMillis(adjustedMs);
@@ -155,10 +128,10 @@ public class AdaptiveWindowManager {
     }
 
     /**
-     * 获取当前推荐的Watermark延迟
+     * 获取当前推荐的Watermark延迟（毫秒）
      */
-    public Duration getRecommendedWatermarkDelay() {
-        return maxOutOfOrderness;
+    public long getRecommendedWatermarkDelayMs() {
+        return maxOutOfOrderness.toMillis();
     }
 
     /**
@@ -219,7 +192,7 @@ public class AdaptiveWindowManager {
         private volatile long lastCountTime = System.currentTimeMillis();
         private volatile double currentRate = 0;
 
-        void update(StreamRecord<?> record) {
+        void update() {
             eventCount.incrementAndGet();
 
             // 每秒更新一次速率

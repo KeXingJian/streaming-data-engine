@@ -56,9 +56,9 @@ public class AdaptiveWindowManagerTest {
                 "高延迟时窗口应该变小或保持不变");
 
         // 检查Watermark延迟
-        Duration watermarkDelay = manager.getRecommendedWatermarkDelay();
-        log.info("推荐Watermark延迟: {}", watermarkDelay);
-        assertTrue(watermarkDelay.toMillis() > 0);
+        long watermarkDelayMs = manager.getRecommendedWatermarkDelayMs();
+        log.info("推荐Watermark延迟: {} ms", watermarkDelayMs);
+        assertTrue(watermarkDelayMs > 0);
     }
 
     @Test

@@ -5,7 +5,6 @@ import com.kxj.streamingdataengine.ai.AnomalyDetector;
 import com.kxj.streamingdataengine.ai.BackpressureController;
 import com.kxj.streamingdataengine.core.model.*;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -17,7 +16,6 @@ import java.util.concurrent.*;
  * 核心组件协调和调度
  */
 @Slf4j
-@RequiredArgsConstructor
 public class ExecutionEngine {
 
     private final int parallelism;
@@ -33,26 +31,20 @@ public class ExecutionEngine {
 
     private volatile boolean running = false;
 
-    public ExecutionEngine() {
-        this(Runtime.getRuntime().availableProcessors(),
-             Duration.ofMillis(200),
-             true, true);
-    }
-
     public ExecutionEngine(int parallelism, Duration watermarkInterval,
                           boolean enableAdaptiveWindow, boolean enableBackpressure) {
-        this.parallelism = parallelism;
-        this.watermarkInterval = watermarkInterval;
-        this.enableAdaptiveWindow = enableAdaptiveWindow;
-        this.enableBackpressure = enableBackpressure;
+        this.parallelism = parallelism;                         // 并行度，同时处理任务的线程数
+        this.watermarkInterval = watermarkInterval;             // Watermark生成间隔，推进事件时间
+        this.enableAdaptiveWindow = enableAdaptiveWindow;       // 是否启用自适应窗口动态调整
+        this.enableBackpressure = enableBackpressure;           // 是否启用背压控制防止系统过载
 
-        this.executorService = Executors.newVirtualThreadPerTaskExecutor();
-        this.watermarkManager = new WatermarkManager();
+        this.executorService = Executors.newVirtualThreadPerTaskExecutor(); // 虚拟线程池，调度异步任务
+        this.watermarkManager = new WatermarkManager();         // Watermark管理器，维护当前事件时间水位线
         this.adaptiveWindowManager = enableAdaptiveWindow ?
-                new AdaptiveWindowManager(Duration.ofSeconds(10)) : null;
-        this.anomalyDetector = new AnomalyDetector(this::handleAnomaly);
+                new AdaptiveWindowManager(Duration.ofSeconds(10)) : null;   // 自适应窗口管理器，动态优化窗口参数
+        this.anomalyDetector = new AnomalyDetector(this::handleAnomaly);    // 异常检测器，监控流量异常并告警
         this.backpressureController = enableBackpressure ?
-                new BackpressureController() : null;
+                new BackpressureController() : null;            // 背压控制器，根据负载动态限流
     }
 
     /**
@@ -101,8 +93,7 @@ public class ExecutionEngine {
         }
 
         // 处理Watermark
-        if (record.value() instanceof Watermark) {
-            Watermark watermark = (Watermark) record.value();
+        if (record.value() instanceof Watermark watermark) {
             watermarkManager.updateWatermark(watermark);
 
             // 通知所有算子
@@ -113,7 +104,7 @@ public class ExecutionEngine {
         }
 
         // 自适应窗口采样
-        if (enableAdaptiveWindow && adaptiveWindowManager != null) {
+        if (enableAdaptiveWindow) {
             adaptiveWindowManager.collectSample(record);
         }
 
@@ -147,7 +138,7 @@ public class ExecutionEngine {
 
         // 记录处理延迟
         long latency = System.currentTimeMillis() - startTime;
-        if (enableBackpressure && backpressureController != null) {
+        if (enableBackpressure) {
             backpressureController.recordSample(record, latency);
         }
 
@@ -163,10 +154,9 @@ public class ExecutionEngine {
                 Thread.sleep(watermarkInterval.toMillis());
 
                 long currentWatermark = watermarkManager.getCurrentWatermark();
-                if (enableAdaptiveWindow && adaptiveWindowManager != null) {
+                if (enableAdaptiveWindow) {
                     // 使用自适应的Watermark延迟
-                    long delay = adaptiveWindowManager.getRecommendedWatermarkDelay().toMillis();
-                    currentWatermark = System.currentTimeMillis() - delay;
+                    currentWatermark = System.currentTimeMillis() - adaptiveWindowManager.getRecommendedWatermarkDelayMs();
                 }
 
                 Watermark watermark = new Watermark(currentWatermark);
@@ -184,13 +174,12 @@ public class ExecutionEngine {
      */
     private void adaptiveAdjustmentLoop() {
         while (running) {
+            //kxj: 获取窗口大小
             try {
                 Thread.sleep(5000); // 每5秒检查一次
 
-                if (adaptiveWindowManager != null) {
-                    Duration newSize = adaptiveWindowManager.getCurrentWindowSize();
-                    log.debug("Adaptive window size: {}", newSize);
-                }
+                Duration newSize = adaptiveWindowManager.getCurrentWindowSize();
+                log.debug("Adaptive window size: {}", newSize);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -206,11 +195,9 @@ public class ExecutionEngine {
             try {
                 Thread.sleep(1000);
 
-                if (backpressureController != null) {
-                    BackpressureController.SystemStatus status = backpressureController.getStatus();
-                    if (status.getPressureLevel() != BackpressureController.PressureLevel.NORMAL) {
-                        log.warn("Backpressure detected: {}", status);
-                    }
+                BackpressureController.SystemStatus status = backpressureController.getStatus();
+                if (status.getPressureLevel() != BackpressureController.PressureLevel.NORMAL) {
+                    log.warn("Backpressure detected: {}", status);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -231,7 +218,7 @@ public class ExecutionEngine {
         // 根据异常级别调整系统参数
         switch (result.getLevel()) {
             case CRITICAL:
-                if (enableBackpressure && backpressureController != null) {
+                if (enableBackpressure) {
                     // 强制降低处理速率
                     backpressureController.setQueueSize(100000); // 模拟高队列
                 }
@@ -272,8 +259,7 @@ public class ExecutionEngine {
                 running,
                 parallelism,
                 watermarkManager.getCurrentWatermark(),
-                enableBackpressure && backpressureController != null ?
-                        backpressureController.getStatus() : null,
+                enableBackpressure ? backpressureController.getStatus() : null,
                 anomalyDetector.getStatistics()
         );
     }

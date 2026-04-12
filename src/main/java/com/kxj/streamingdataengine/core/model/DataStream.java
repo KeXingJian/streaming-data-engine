@@ -45,16 +45,6 @@ public interface DataStream<T> {
     WindowedStream<T> window(Window.Assigner<T> assigner);
 
     /**
-     * 添加算子
-     */
-    DataStream<T> addOperator(StreamOperator<T> operator);
-
-    /**
-     * 设置Watermark生成策略
-     */
-    DataStream<T> assignTimestampsAndWatermarks(WatermarkStrategy<T> strategy);
-
-    /**
      * 添加sink
      */
     DataStream<T> addSink(DataSink<T> sink);

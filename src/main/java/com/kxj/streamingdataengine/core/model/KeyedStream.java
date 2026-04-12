@@ -13,7 +13,7 @@ public interface KeyedStream<T, K> extends DataStream<T> {
     /**
      * 获取键提取器
      */
-    Function<T, K> getKeyExtractor();
+    Function<T, K> keyExtractor();
 
     /**
      * 按键聚合
