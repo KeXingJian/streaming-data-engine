@@ -10,10 +10,10 @@ import com.kxj.streamingdataengine.core.model.KeyedStream;
 import com.kxj.streamingdataengine.core.model.WindowedStream;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
 import com.kxj.streamingdataengine.execution.ExecutionEngine;
+import com.kxj.streamingdataengine.operator.TransformOperator;
 import com.kxj.streamingdataengine.window.Window;
 import com.kxj.streamingdataengine.window.trigger.Trigger;
 import lombok.Getter;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -30,26 +30,26 @@ import java.util.function.Predicate;
 public class DataStreamImpl<T> implements DataStream<T> {
 
     private final String jobName;
-    private final StreamConfig config;
+    private final StreamConfig config = new StreamConfig();
     private final DataSource<T> source;
 
     // 转换链：存储从source到当前类型的所有转换函数
     private final List<Function<?, ?>> transformations;
 
     private final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
+
     // 构造源流
-    public DataStreamImpl(String jobName, StreamConfig config, DataSource<T> source) {
+    public DataStreamImpl(String jobName,DataSource<T> source) {
         this.jobName = jobName;
-        this.config = config;
+
         this.source = source;
         this.transformations = new ArrayList<>();
     }
 
     // 构造转换流
-    private DataStreamImpl(String jobName, StreamConfig config, DataSource<?> source,
+    private DataStreamImpl(String jobName, DataSource<?> source,
                            List<Function<?, ?>> transformations) {
         this.jobName = jobName;
-        this.config = config;
         this.source = (DataSource<T>) source;
         this.transformations = new ArrayList<>(transformations);
     }
@@ -70,14 +70,14 @@ public class DataStreamImpl<T> implements DataStream<T> {
         List<Function<?, ?>> newTransformations = new ArrayList<>(transformations);
         newTransformations.add(mapper);
         log.debug("[kxj: map转换] 当前转换链长度={}, 新增map转换", newTransformations.size());
-        return new DataStreamImpl<>(jobName + "_map", config, source, newTransformations);
+        return new DataStreamImpl<>(jobName + "_map", source, newTransformations);
     }
 
     @Override
     public DataStream<T> filter(Predicate<T> predicate) {
         List<Function<?, ?>> newTransformations = new ArrayList<>(transformations);
         newTransformations.add((Function<T, T>) v -> predicate.test(v) ? v : null);
-        return new DataStreamImpl<>(jobName + "_filter", config, source, newTransformations);
+        return new DataStreamImpl<>(jobName + "_filter", source, newTransformations);
     }
 
     @Override
@@ -99,12 +99,9 @@ public class DataStreamImpl<T> implements DataStream<T> {
     @Override
     public List<T> collect() {
         List<T> results = new ArrayList<>();
-        DataSink<T> collectorSink = new DataSink<T>() {
-            @Override
-            public void write(T value) {
-                if (value != null) {
-                    results.add(value);
-                }
+        DataSink<T> collectorSink = value -> {
+            if (value != null) {
+                results.add(value);
             }
         };
         sinks.add(collectorSink);
@@ -136,28 +133,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
             for (Function<?, ?> f : transformations) {
                 @SuppressWarnings("unchecked")
                 Function<Object, Object> func = (Function<Object, Object>) f;
-                operators.add(new StreamOperator<T>() {
-                    @Override
-                    public String getName() {
-                        return "transform";
-                    }
-
-                    @Override
-                    public List<StreamRecord<T>> processElement(StreamRecord<T> record) {
-                        Object result = func.apply(record.value());
-                        if (result == null) {
-                            return Collections.emptyList();
-                        }
-                        @SuppressWarnings("unchecked")
-                        T typed = (T) result;
-                        return List.of(record.withValue(typed));
-                    }
-
-                    @Override
-                    public List<StreamRecord<T>> processWatermark(com.kxj.streamingdataengine.core.model.Watermark watermark) {
-                        return Collections.emptyList();
-                    }
-                });
+                operators.add(new TransformOperator<>(func));
             }
 
             // [kxj: 多sink聚合为复合sink，适配engine单sink接口]

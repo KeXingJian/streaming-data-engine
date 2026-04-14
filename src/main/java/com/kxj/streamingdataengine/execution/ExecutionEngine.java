@@ -82,6 +82,7 @@ public class ExecutionEngine {
         List<StreamRecord<T>> results = new ArrayList<>();
         results.add(record);
 
+        //kxj减速降温
         // 背压检查
         if (enableBackpressure && !backpressureController.tryAcquire()) {
             // 限流：等待
@@ -255,6 +256,8 @@ public class ExecutionEngine {
      * 获取引擎状态
      */
     public EngineStatus getStatus() {
+        new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         return new EngineStatus(
                 running,
                 parallelism,

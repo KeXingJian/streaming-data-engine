@@ -34,7 +34,6 @@ public class FilterOperator<T> implements StreamOperator<T> {
     }
 
     @Override
-    public List<StreamRecord<T>> processWatermark(Watermark watermark) {
-        return List.of(); // Watermark不传递
+    public void processWatermark(Watermark watermark) {
     }
 }

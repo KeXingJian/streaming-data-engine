@@ -35,7 +35,6 @@ public class MapOperator<T, R> implements StreamOperator<R> {
     }
 
     @Override
-    public List<StreamRecord<R>> processWatermark(Watermark watermark) {
-        return List.of();
+    public void processWatermark(Watermark watermark) {
     }
 }

@@ -1,6 +1,7 @@
 package com.kxj.streamingdataengine.core.operator;
 
 import com.kxj.streamingdataengine.core.model.StreamRecord;
+import com.kxj.streamingdataengine.core.model.Watermark;
 
 import java.util.List;
 
@@ -23,7 +24,7 @@ public interface StreamOperator<T> {
     /**
      * 处理Watermark
      */
-    List<StreamRecord<T>> processWatermark(com.kxj.streamingdataengine.core.model.Watermark watermark);
+    void processWatermark(Watermark watermark);
 
     /**
      * 打开算子

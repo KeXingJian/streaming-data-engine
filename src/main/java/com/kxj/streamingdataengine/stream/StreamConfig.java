@@ -1,6 +1,8 @@
 package com.kxj.streamingdataengine.stream;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.Duration;
 
@@ -8,6 +10,8 @@ import java.time.Duration;
  * 流处理配置
  */
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class StreamConfig {
 
     private int parallelism = Runtime.getRuntime().availableProcessors();         // 并行度，同时处理任务的线程数
