@@ -2,7 +2,7 @@ package com.kxj.streamingdataengine.aggregation;
 
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.storage.lsm.LSMTree;
-import lombok.Getter;
+import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -259,26 +259,14 @@ public class MergeTreeAggregator<K extends Comparable<K>, T, ACC, R> {
     /**
      * 聚合值包装
      */
-    @lombok.AllArgsConstructor
+    @AllArgsConstructor
     public static class AggregatedValue<T, ACC, R> {
         private final T originalValue;
         private final ACC accumulator;
         private final long timestamp;
     }
 
-    @Getter
-    public static class Stats {
-        private final long totalRecords;
-        private final long aggregatedRecords;
-        private final int partitionCount;
-        private final int activePartitionCount;
-
-        public Stats(long totalRecords, long aggregatedRecords, int partitionCount, int activePartitionCount) {
-            this.totalRecords = totalRecords;
-            this.aggregatedRecords = aggregatedRecords;
-            this.partitionCount = partitionCount;
-            this.activePartitionCount = activePartitionCount;
-        }
+    public record Stats(long totalRecords, long aggregatedRecords, int partitionCount, int activePartitionCount) {
 
         public double getAggregationRatio() {
             return totalRecords > 0 ? (double) aggregatedRecords / totalRecords : 0;

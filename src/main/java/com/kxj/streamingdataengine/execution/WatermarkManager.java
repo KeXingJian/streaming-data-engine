@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Watermark管理器
  * 管理多分区Watermark，处理乱序数据
- *
  * 借鉴Flink的Watermark机制：
  * 1. 每个分区独立追踪Watermark
  * 2. 全局Watermark取最小值（保证正确性）

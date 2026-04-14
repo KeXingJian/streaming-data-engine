@@ -197,7 +197,7 @@ public class ExecutionEngine {
                 Thread.sleep(1000);
 
                 BackpressureController.SystemStatus status = backpressureController.getStatus();
-                if (status.getPressureLevel() != BackpressureController.PressureLevel.NORMAL) {
+                if (status.pressureLevel() != BackpressureController.PressureLevel.NORMAL) {
                     log.warn("Backpressure detected: {}", status);
                 }
             } catch (InterruptedException e) {

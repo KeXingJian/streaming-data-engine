@@ -125,6 +125,7 @@ public abstract class Window implements Comparable<Window>, Serializable {
      * 会话窗口
      */
     public static class SessionWindow extends Window {
+        @Serial
         private static final long serialVersionUID = 1L;
 
         public SessionWindow(long start, long end) {

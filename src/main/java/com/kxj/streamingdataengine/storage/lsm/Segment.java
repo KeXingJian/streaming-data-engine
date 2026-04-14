@@ -9,7 +9,6 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * 不可变磁盘Segment
@@ -78,8 +77,8 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
 
             // 序列化条目
             byte[] keyBytes = serializeKey(key);
-            byte[] valueBytes = value.isDeleted() ? null : serializeValue(value.getValue());
-            EntryData entryData = new EntryData(keyBytes, valueBytes, value.getSequenceNumber(), value.isDeleted());
+            byte[] valueBytes = value.deleted() ? null : serializeValue(value.value());
+            EntryData entryData = new EntryData(keyBytes, valueBytes, value.sequenceNumber(), value.deleted());
             entries.add(entryData);
 
             offset += entryData.getSerializedSize();
@@ -134,7 +133,7 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
 
                 // 只保留最新的版本
                 if (!merged.containsKey(key) ||
-                    merged.get(key).getSequenceNumber() < value.getSequenceNumber()) {
+                    merged.get(key).sequenceNumber() < value.sequenceNumber()) {
                     merged.put(key, value);
                 }
             }
@@ -144,10 +143,10 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
         MemTable<K, V> memTable = new MemTable<>();
         long seq = 0;
         for (Map.Entry<K, Entry<V>> entry : merged.entrySet()) {
-            if (entry.getValue().isDeleted()) {
+            if (entry.getValue().deleted()) {
                 memTable.delete(entry.getKey(), seq++);
             } else {
-                memTable.put(entry.getKey(), entry.getValue().getValue(), seq++);
+                memTable.put(entry.getKey(), entry.getValue().value(), seq++);
             }
         }
 

@@ -3,6 +3,7 @@ package com.kxj.streamingdataengine.core.model;
 import lombok.Getter;
 import lombok.ToString;
 
+import java.io.Serial;
 import java.io.Serializable;
 
 /**
@@ -13,6 +14,7 @@ import java.io.Serializable;
 @ToString
 public class Watermark implements Serializable, Comparable<Watermark> {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     /**

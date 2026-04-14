@@ -1,6 +1,5 @@
 package com.kxj.streamingdataengine.ai;
 
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
@@ -89,16 +88,16 @@ public class AnomalyDetector {
 
         if (stdDev > 0) {
             zScore = Math.abs(currentValue - mean) / stdDev;
-            is3SigmaAnomaly = zScore > config.getSigmaThreshold();
+            is3SigmaAnomaly = zScore > config.sigmaThreshold();
         }
 
         // [kxj: 2. 变化率检测 - 突变往往预示系统问题，权重最高(2分)]
         double changeRate = calculateChangeRate(currentValue);
-        boolean isChangeRateAnomaly = Math.abs(changeRate) > config.getMaxChangeRate();
+        boolean isChangeRateAnomaly = Math.abs(changeRate) > config.maxChangeRate();
 
         // [kxj: 3. 历史同比检测 - 识别周期性模式中的异常]
         double seasonalDeviation = calculateSeasonalDeviation(currentValue);
-        boolean isSeasonalAnomaly = Math.abs(seasonalDeviation) > config.getSeasonalThreshold();
+        boolean isSeasonalAnomaly = Math.abs(seasonalDeviation) > config.seasonalThreshold();
 
         // [kxj: 综合评分 - 1分MEDIUM, 2分HIGH, 3+分CRITICAL]
         int anomalyScore = 0;
@@ -109,9 +108,9 @@ public class AnomalyDetector {
         AnomalyLevel level = AnomalyLevel.NORMAL;
         if (anomalyScore >= 3) {
             level = AnomalyLevel.CRITICAL;
-        } else if (anomalyScore >= 2) {
+        } else if (anomalyScore == 2) {
             level = AnomalyLevel.HIGH;
-        } else if (anomalyScore >= 1) {
+        } else if (anomalyScore == 1) {
             level = AnomalyLevel.MEDIUM;
         }
 
@@ -135,7 +134,7 @@ public class AnomalyDetector {
             return 0;
         }
 
-        double previous = recent.get(0);
+        double previous = recent.getFirst();
         if (previous == 0) {
             return currentValue > 0 ? Double.MAX_VALUE : 0;
         }
@@ -209,11 +208,7 @@ public class AnomalyDetector {
         void onAlert(AnomalyResult result);
     }
 
-    @lombok.AllArgsConstructor
-    @lombok.Getter
-    public static class TrafficRecord {
-        private final long timestamp;
-        private final double value;
+    public record TrafficRecord(long timestamp, double value) {
     }
 
     @lombok.AllArgsConstructor
@@ -244,30 +239,24 @@ public class AnomalyDetector {
         }
     }
 
-    @lombok.AllArgsConstructor
-    @lombok.Getter
-    public static class DetectionConfig {
-        private final double sigmaThreshold;      // 3-sigma阈值
-        private final double maxChangeRate;       // 最大变化率
-        private final double seasonalThreshold;   // 同比偏差阈值
+    /**
+     * @param sigmaThreshold    3-sigma阈值
+     * @param maxChangeRate     最大变化率
+     * @param seasonalThreshold 同比偏差阈值
+     */
 
-        public static DetectionConfig defaultConfig() {
-            return new DetectionConfig(3.0, 0.5, 0.3);
+    public record DetectionConfig(double sigmaThreshold, double maxChangeRate, double seasonalThreshold) {
+            public static DetectionConfig defaultConfig() {
+                return new DetectionConfig(3.0, 0.5, 0.3);
+            }
+
+            public static DetectionConfig sensitiveConfig() {
+                return new DetectionConfig(2.0, 0.3, 0.2);
+            }
         }
 
-        public static DetectionConfig sensitiveConfig() {
-            return new DetectionConfig(2.0, 0.3, 0.2);
-        }
-    }
 
-    @lombok.AllArgsConstructor
-    @lombok.Getter
-    public static class TrafficStatistics {
-        private final double mean;
-        private final double stdDev;
-        private final double min;
-        private final double max;
-        private final long count;
+    public record TrafficStatistics(double mean, double stdDev, double min, double max, long count) {
     }
 
     /**

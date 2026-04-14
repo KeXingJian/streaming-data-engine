@@ -2,9 +2,9 @@ package com.kxj.streamingdataengine.window;
 
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.storage.lsm.LSMTree;
+import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -133,7 +133,7 @@ public class WindowState<K, T, ACC, R> {
     /**
      * 窗口元数据
      */
-    @lombok.AllArgsConstructor
+    @AllArgsConstructor
     public static class WindowMetadata {
         public long recordCount;
         public long lastUpdateTime;

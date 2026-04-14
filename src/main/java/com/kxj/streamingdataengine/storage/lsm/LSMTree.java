@@ -1,12 +1,10 @@
 package com.kxj.streamingdataengine.storage.lsm;
 
-import com.kxj.streamingdataengine.core.model.StreamRecord;
-import lombok.Getter;
+
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -132,14 +130,14 @@ public class LSMTree<K extends Comparable<K>, V> {
             // 1. 查活跃MemTable
             Optional<Entry<V>> entry = activeMemTable.get(key);
             if (entry.isPresent()) {
-                return entry.get().isDeleted() ? Optional.empty() : Optional.of(entry.get().getValue());
+                return entry.get().deleted() ? Optional.empty() : Optional.of(entry.get().value());
             }
 
             // 2. 查不可变MemTable（从新到旧）
             for (MemTable<K, V> memTable : immutableMemTables) {
                 entry = memTable.get(key);
                 if (entry.isPresent()) {
-                    return entry.get().isDeleted() ? Optional.empty() : Optional.of(entry.get().getValue());
+                    return entry.get().deleted() ? Optional.empty() : Optional.of(entry.get().value());
                 }
             }
 
@@ -147,7 +145,7 @@ public class LSMTree<K extends Comparable<K>, V> {
             for (Segment<K, V> segment : segments) {
                 entry = segment.get(key);
                 if (entry.isPresent()) {
-                    return entry.get().isDeleted() ? Optional.empty() : Optional.of(entry.get().getValue());
+                    return entry.get().deleted() ? Optional.empty() : Optional.of(entry.get().value());
                 }
             }
 
@@ -179,8 +177,8 @@ public class LSMTree<K extends Comparable<K>, V> {
             // 过滤删除的数据
             List<Map.Entry<K, V>> filtered = new ArrayList<>();
             for (Map.Entry<K, Entry<V>> e : result.entrySet()) {
-                if (!e.getValue().isDeleted()) {
-                    filtered.add(Map.entry(e.getKey(), e.getValue().getValue()));
+                if (!e.getValue().deleted()) {
+                    filtered.add(Map.entry(e.getKey(), e.getValue().value()));
                 }
             }
 
@@ -209,7 +207,7 @@ public class LSMTree<K extends Comparable<K>, V> {
      * 刷盘MemTable
      */
     private void flushMemTable() {
-        immutableMemTables.add(0, activeMemTable);
+        immutableMemTables.addFirst(activeMemTable);
         activeMemTable = new MemTable<>();
 
         // 异步刷盘
@@ -229,9 +227,9 @@ public class LSMTree<K extends Comparable<K>, V> {
         lock.writeLock().lock();
         try {
             while (!immutableMemTables.isEmpty()) {
-                MemTable<K, V> memTable = immutableMemTables.remove(immutableMemTables.size() - 1);
+                MemTable<K, V> memTable = immutableMemTables.removeLast();
                 Segment<K, V> segment = Segment.fromMemTable(memTable);
-                segments.add(0, segment);
+                segments.addFirst(segment);
             }
 
             // 检查是否需要Compaction
@@ -282,19 +280,7 @@ public class LSMTree<K extends Comparable<K>, V> {
         }
     }
 
-    @Getter
-    public static class Stats {
-        private final long activeMemTableSize;
-        private final int immutableMemTableCount;
-        private final int segmentCount;
-        private final long totalDiskSize;
-
-        public Stats(long activeMemTableSize, int immutableMemTableCount, int segmentCount, long totalDiskSize) {
-            this.activeMemTableSize = activeMemTableSize;
-            this.immutableMemTableCount = immutableMemTableCount;
-            this.segmentCount = segmentCount;
-            this.totalDiskSize = totalDiskSize;
-        }
+    public record Stats(long activeMemTableSize, int immutableMemTableCount, int segmentCount, long totalDiskSize) {
     }
 
     /**

@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -131,15 +130,15 @@ public class AnomalyDetectorTest {
         AnomalyDetector.TrafficStatistics stats = detector.getStatistics();
 
         log.info("统计信息: mean={}, min={}, max={}, count={}",
-                String.format("%.2f", stats.getMean()),
-                String.format("%.2f", stats.getMin()),
-                String.format("%.2f", stats.getMax()),
-                stats.getCount());
+                String.format("%.2f", stats.mean()),
+                String.format("%.2f", stats.min()),
+                String.format("%.2f", stats.max()),
+                stats.count());
 
-        assertEquals(100.0, stats.getMean(), 0.01, "平均值应该是100");
-        assertEquals(100.0, stats.getMin(), 0.01, "最小值应该是100");
-        assertEquals(100.0, stats.getMax(), 0.01, "最大值应该是100");
-        assertEquals(100, stats.getCount());
+        assertEquals(100.0, stats.mean(), 0.01, "平均值应该是100");
+        assertEquals(100.0, stats.min(), 0.01, "最小值应该是100");
+        assertEquals(100.0, stats.max(), 0.01, "最大值应该是100");
+        assertEquals(100, stats.count());
     }
 
     @Test

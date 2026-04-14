@@ -117,16 +117,6 @@ class MemTable<K extends Comparable<K>, V> {
 /**
  * 条目封装 - 包含值、序列号和删除标记
  */
-@Getter
-class Entry<V> {
-    private final V value;
-    private final long sequenceNumber;
-    private final boolean deleted;
-
-    public Entry(V value, long sequenceNumber, boolean deleted) {
-        this.value = value;
-        this.sequenceNumber = sequenceNumber;
-        this.deleted = deleted;
-    }
+record Entry<V>(V value, long sequenceNumber, boolean deleted) {
 
 }

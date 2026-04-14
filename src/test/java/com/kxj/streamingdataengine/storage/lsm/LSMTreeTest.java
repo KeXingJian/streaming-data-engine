@@ -109,9 +109,9 @@ public class LSMTreeTest {
         // 验证写入
         LSMTree.Stats stats = lsmTree.getStats();
         log.info("MemTable大小: {}, Segment数量: {}",
-                stats.getActiveMemTableSize(), stats.getSegmentCount());
+                stats.activeMemTableSize(), stats.segmentCount());
 
-        assertTrue(stats.getActiveMemTableSize() > 0 || stats.getSegmentCount() > 0);
+        assertTrue(stats.activeMemTableSize() > 0 || stats.segmentCount() > 0);
     }
 
     @Test
@@ -174,18 +174,18 @@ public class LSMTreeTest {
 
         LSMTree.Stats statsBefore = lsmTree.getStats();
         log.info("Compaction前 - MemTable: {}, Segments: {}, 总大小: {}",
-                statsBefore.getActiveMemTableSize(),
-                statsBefore.getSegmentCount(),
-                statsBefore.getTotalDiskSize());
+                statsBefore.activeMemTableSize(),
+                statsBefore.segmentCount(),
+                statsBefore.totalDiskSize());
 
         // 手动触发compaction
         lsmTree.compact();
 
         LSMTree.Stats statsAfter = lsmTree.getStats();
         log.info("Compaction后 - MemTable: {}, Segments: {}, 总大小: {}",
-                statsAfter.getActiveMemTableSize(),
-                statsAfter.getSegmentCount(),
-                statsAfter.getTotalDiskSize());
+                statsAfter.activeMemTableSize(),
+                statsAfter.segmentCount(),
+                statsAfter.totalDiskSize());
 
         // 验证数据完整性
         for (int i = 0; i < 100; i++) {

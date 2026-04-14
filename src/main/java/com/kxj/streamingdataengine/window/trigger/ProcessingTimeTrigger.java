@@ -3,12 +3,15 @@ package com.kxj.streamingdataengine.window.trigger;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.window.Window;
 
+import java.io.Serial;
+
 /**
  * 处理时间触发器
  * 当处理时间超过窗口结束时间时触发
  */
 public class ProcessingTimeTrigger<T> implements Trigger<T> {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     public static <T> ProcessingTimeTrigger<T> create() {

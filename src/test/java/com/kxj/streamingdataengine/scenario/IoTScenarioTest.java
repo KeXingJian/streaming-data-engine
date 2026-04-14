@@ -1,6 +1,5 @@
 package com.kxj.streamingdataengine.scenario;
 
-import com.kxj.streamingdataengine.aggregation.AggregateFunction;
 import com.kxj.streamingdataengine.aggregation.MergeTreeAggregator;
 import com.kxj.streamingdataengine.ai.AnomalyDetector;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
@@ -178,7 +177,7 @@ public class IoTScenarioTest {
 
         MergeTreeAggregator.Stats stats = aggregator.getStats();
         log.info("MergeTree统计: 分区={}, 活跃分区={}",
-                stats.getPartitionCount(), stats.getActivePartitionCount());
+                stats.partitionCount(), stats.activePartitionCount());
 
         assertTrue(throughput > 1000, "吞吐量应该超过1000记录/秒");
     }

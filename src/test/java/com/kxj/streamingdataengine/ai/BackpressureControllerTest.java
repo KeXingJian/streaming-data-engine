@@ -28,7 +28,7 @@ public class BackpressureControllerTest {
         // 初始状态
         BackpressureController.SystemStatus status1 = controller.getStatus();
         log.info("初始状态: {}", status1);
-        assertEquals(BackpressureController.PressureLevel.NORMAL, status1.getPressureLevel());
+        assertEquals(BackpressureController.PressureLevel.NORMAL, status1.pressureLevel());
 
         // 模拟高负载（长延迟+大队列）
         for (int i = 0; i < 50; i++) {
@@ -41,7 +41,7 @@ public class BackpressureControllerTest {
         log.info("高负载后状态: {}", status2);
 
         // 应该触发限流
-        assertTrue(status2.getRateLimit() < Integer.MAX_VALUE, "应该触发限流");
+        assertTrue(status2.rateLimit() < Integer.MAX_VALUE, "应该触发限流");
     }
 
     @Test
@@ -96,9 +96,9 @@ public class BackpressureControllerTest {
 
         BackpressureController.SystemStatus highStatus = controller.getStatus();
         log.info("高压力状态: level={}, limit={}",
-                highStatus.getPressureLevel(), highStatus.getRateLimit());
+                highStatus.pressureLevel(), highStatus.rateLimit());
 
-        assertNotEquals(BackpressureController.PressureLevel.NORMAL, highStatus.getPressureLevel());
+        assertNotEquals(BackpressureController.PressureLevel.NORMAL, highStatus.pressureLevel());
 
         // 恢复正常
         controller.setQueueSize(100);
@@ -109,10 +109,10 @@ public class BackpressureControllerTest {
 
         BackpressureController.SystemStatus normalStatus = controller.getStatus();
         log.info("恢复后状态: level={}, limit={}",
-                normalStatus.getPressureLevel(), normalStatus.getRateLimit());
+                normalStatus.pressureLevel(), normalStatus.rateLimit());
 
         // 应该恢复到正常或接近正常
-        assertTrue(normalStatus.getRateLimit() > highStatus.getRateLimit(),
+        assertTrue(normalStatus.rateLimit() > highStatus.rateLimit(),
                 "恢复后限流应该放宽");
     }
 

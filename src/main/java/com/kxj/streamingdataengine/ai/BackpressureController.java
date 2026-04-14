@@ -133,11 +133,7 @@ public class BackpressureController {
 
         // 简化的令牌桶检查
         long now = System.currentTimeMillis();
-        if (now % 1000 < (1000 * statistics.currentRate / Math.max(limit, 1))) {
-            return true;
-        }
-
-        return false;
+        return now % 1000 < (1000 * statistics.currentRate / Math.max(limit, 1));
     }
 
     /**
@@ -301,15 +297,9 @@ public class BackpressureController {
         CRITICAL
     }
 
-    @lombok.AllArgsConstructor
-    @lombok.Getter
-    @lombok.ToString
-    public static class SystemStatus {
-        private final PressureLevel pressureLevel;
-        private final int rateLimit;
-        private final long avgLatencyMs;
-        private final int queueSize;
-        private final double currentRate;
+
+    public record SystemStatus(PressureLevel pressureLevel, int rateLimit, long avgLatencyMs, int queueSize,
+                               double currentRate) {
     }
 
     private record Sample(long timestamp, long latency, int queueSize) {}

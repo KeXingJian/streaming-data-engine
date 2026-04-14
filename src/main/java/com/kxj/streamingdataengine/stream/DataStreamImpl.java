@@ -151,11 +151,9 @@ public class DataStreamImpl<T> implements DataStream<T> {
             int filteredCount = 0;
             // [kxj: 从source读取数据，交由engine处理，应用算子链并写入sink]
             while (source.hasMore()) {
-                StreamRecord<?> record = source.nextRecord();
+                StreamRecord<T> record = source.nextRecord();
                 if (record != null) {
-                    @SuppressWarnings("unchecked")
-                    StreamRecord<T> typedRecord = (StreamRecord<T>) record;
-                    List<StreamRecord<T>> results = engine.processRecord(typedRecord, operators, combinedSink);
+                    List<StreamRecord<T>> results = engine.processRecord(record, operators, combinedSink);
                     if (results.isEmpty()) {
                         filteredCount++;
                     } else {
