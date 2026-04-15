@@ -17,20 +17,11 @@ public class Watermark implements Serializable, Comparable<Watermark> {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    /**
-     * 表示所有小于此时间戳的事件都已到达
-     */
-    private final long timestamp;
+    private final long timestamp; // 表示所有小于此时间戳的事件都已到达
 
-    /**
-     * Watermark生成时间
-     */
-    private final long emissionTime;
+    private final long emissionTime; // Watermark生成时间
 
-    /**
-     * 分区ID
-     */
-    private final int partitionId;
+    private final int partitionId; // 分区ID
 
     public Watermark(long timestamp) {
         this(timestamp, -1);

@@ -12,45 +12,21 @@ import java.util.Map;
 @Builder
 public class StreamResult {
 
-    /**
-     * 处理记录数
-     */
-    private final long processedCount;
+    private final long processedCount; // 处理记录数
 
-    /**
-     * 输出记录数
-     */
-    private final long outputCount;
+    private final long outputCount; // 输出记录数
 
-    /**
-     * 迟到记录数
-     */
-    private final long lateRecordCount;
+    private final long lateRecordCount; // 迟到记录数
 
-    /**
-     * 丢弃记录数
-     */
-    private final long droppedCount;
+    private final long droppedCount; // 丢弃记录数
 
-    /**
-     * 处理开始时间
-     */
-    private final long startTime;
+    private final long startTime; // 处理开始时间
 
-    /**
-     * 处理结束时间
-     */
-    private final long endTime;
+    private final long endTime; // 处理结束时间
 
-    /**
-     * 各算子处理统计
-     */
-    private final Map<String, OperatorStats> operatorStats;
+    private final Map<String, OperatorStats> operatorStats; // 各算子处理统计
 
-    /**
-     * 性能指标
-     */
-    private final PerformanceMetrics metrics;
+    private final PerformanceMetrics metrics; // 性能指标
 
     @Getter
     @Builder

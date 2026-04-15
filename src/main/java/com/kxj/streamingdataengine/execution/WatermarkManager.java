@@ -18,20 +18,14 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 public class WatermarkManager {
 
-    /**
-     * 各分区的Watermark
-     */
-    private final Map<Integer, PartitionWatermark> partitionWatermarks;
+    private final Map<Integer, PartitionWatermark> partitionWatermarks; // 各分区的Watermark
 
     /**
      * 空闲超时时间（毫秒）
      */
     private static final long IDLE_TIMEOUT_MS = 60000;
 
-    /**
-     * 全局Watermark
-     */
-    private final AtomicLong globalWatermark;
+    private final AtomicLong globalWatermark; // 全局Watermark
 
     public WatermarkManager() {
         this.partitionWatermarks = new ConcurrentHashMap<>();

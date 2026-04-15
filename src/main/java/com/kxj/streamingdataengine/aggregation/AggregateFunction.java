@@ -54,28 +54,28 @@ public interface AggregateFunction<T, ACC, R> extends Serializable {
     /**
      * 计数聚合
      */
-    static <T> AggregateFunction<T, Long, Long> count() {
+    static <T> AggregateFunction<T, CountAccumulator, Long> count() {
         return new CountAggregate<>();
     }
 
     /**
      * 求和聚合（整数）
      */
-    static AggregateFunction<Integer, Long, Long> sumInt() {
+    static AggregateFunction<Integer, SumAccumulator, Long> sumInt() {
         return new SumIntAggregate();
     }
 
     /**
      * 求和聚合（长整数）
      */
-    static AggregateFunction<Long, Long, Long> sumLong() {
+    static AggregateFunction<Long, SumAccumulator, Long> sumLong() {
         return new SumLongAggregate();
     }
 
     /**
      * 求和聚合（浮点数）
      */
-    static AggregateFunction<Double, Double, Double> sumDouble() {
+    static AggregateFunction<Double, DoubleSumAccumulator, Double> sumDouble() {
         return new SumDoubleAggregate();
     }
 
@@ -89,117 +89,156 @@ public interface AggregateFunction<T, ACC, R> extends Serializable {
     /**
      * 最大值聚合
      */
-    static <T extends Comparable<T>> AggregateFunction<T, T, T> max() {
+    static <T extends Comparable<T>> AggregateFunction<T, Holder<T>, T> max() {
         return new MaxAggregate<>();
     }
 
     /**
      * 最小值聚合
      */
-    static <T extends Comparable<T>> AggregateFunction<T, T, T> min() {
+    static <T extends Comparable<T>> AggregateFunction<T, Holder<T>, T> min() {
         return new MinAggregate<>();
     }
 }
 
+// 可变计数累加器
+class CountAccumulator implements java.io.Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+    long count;
+
+    CountAccumulator() {
+        this.count = 0;
+    }
+}
+
 // 计数聚合实现
-class CountAggregate<T> implements AggregateFunction<T, Long, Long> {
+class CountAggregate<T> implements AggregateFunction<T, CountAccumulator, Long> {
     @Serial
     private static final long serialVersionUID = 1L;
 
     @Override
-    public Long createAccumulator() {
-        return 0L;
+    public CountAccumulator createAccumulator() {
+        return new CountAccumulator();
     }
 
     @Override
-    public void add(T value, Long accumulator) {
-        // 不直接使用accumulator（不可变），但保持接口兼容
+    public void add(T value, CountAccumulator accumulator) {
+        accumulator.count++;
     }
 
     @Override
-    public Long getResult(Long accumulator) {
-        return accumulator;
+    public Long getResult(CountAccumulator accumulator) {
+        return accumulator.count;
     }
 
     @Override
-    public Long merge(Long a, Long b) {
-        return a + b;
+    public CountAccumulator merge(CountAccumulator a, CountAccumulator b) {
+        a.count += b.count;
+        return a;
+    }
+}
+
+// 可变求和累加器
+class SumAccumulator implements java.io.Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+    long sum;
+
+    SumAccumulator() {
+        this.sum = 0;
     }
 }
 
 // 整数求和
-class SumIntAggregate implements AggregateFunction<Integer, Long, Long> {
+class SumIntAggregate implements AggregateFunction<Integer, SumAccumulator, Long> {
     @Serial
     private static final long serialVersionUID = 1L;
 
     @Override
-    public Long createAccumulator() {
-        return 0L;
+    public SumAccumulator createAccumulator() {
+        return new SumAccumulator();
     }
 
     @Override
-    public void add(Integer value, Long accumulator) {
-        // 累加器会被替换
+    public void add(Integer value, SumAccumulator accumulator) {
+        accumulator.sum += (value != null ? value : 0);
     }
 
     @Override
-    public Long getResult(Long accumulator) {
-        return accumulator;
+    public Long getResult(SumAccumulator accumulator) {
+        return accumulator.sum;
     }
 
     @Override
-    public Long merge(Long a, Long b) {
-        return a + b;
+    public SumAccumulator merge(SumAccumulator a, SumAccumulator b) {
+        a.sum += b.sum;
+        return a;
     }
 }
 
 // 长整数求和
-class SumLongAggregate implements AggregateFunction<Long, Long, Long> {
+class SumLongAggregate implements AggregateFunction<Long, SumAccumulator, Long> {
     @Serial
     private static final long serialVersionUID = 1L;
 
     @Override
-    public Long createAccumulator() {
-        return 0L;
+    public SumAccumulator createAccumulator() {
+        return new SumAccumulator();
     }
 
     @Override
-    public void add(Long value, Long accumulator) {
+    public void add(Long value, SumAccumulator accumulator) {
+        accumulator.sum += (value != null ? value : 0);
     }
 
     @Override
-    public Long getResult(Long accumulator) {
-        return accumulator;
+    public Long getResult(SumAccumulator accumulator) {
+        return accumulator.sum;
     }
 
     @Override
-    public Long merge(Long a, Long b) {
-        return a + b;
+    public SumAccumulator merge(SumAccumulator a, SumAccumulator b) {
+        a.sum += b.sum;
+        return a;
+    }
+}
+
+// 可变浮点数求和累加器
+class DoubleSumAccumulator implements java.io.Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+    double sum;
+
+    DoubleSumAccumulator() {
+        this.sum = 0.0;
     }
 }
 
 // 浮点数求和
-class SumDoubleAggregate implements AggregateFunction<Double, Double, Double> {
+class SumDoubleAggregate implements AggregateFunction<Double, DoubleSumAccumulator, Double> {
     @Serial
     private static final long serialVersionUID = 1L;
 
     @Override
-    public Double createAccumulator() {
-        return 0.0;
+    public DoubleSumAccumulator createAccumulator() {
+        return new DoubleSumAccumulator();
     }
 
     @Override
-    public void add(Double value, Double accumulator) {
+    public void add(Double value, DoubleSumAccumulator accumulator) {
+        accumulator.sum += (value != null ? value : 0.0);
     }
 
     @Override
-    public Double getResult(Double accumulator) {
-        return accumulator;
+    public Double getResult(DoubleSumAccumulator accumulator) {
+        return accumulator.sum;
     }
 
     @Override
-    public Double merge(Double a, Double b) {
-        return a + b;
+    public DoubleSumAccumulator merge(DoubleSumAccumulator a, DoubleSumAccumulator b) {
+        a.sum += b.sum;
+        return a;
     }
 }
 
@@ -257,57 +296,73 @@ class AverageAggregate implements AggregateFunction<Double, AverageAccumulator, 
     }
 }
 
+// 可变包装器
+class Holder<T> implements java.io.Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+    T value;
+
+    Holder(T value) {
+        this.value = value;
+    }
+}
+
 // 最大值聚合
-class MaxAggregate<T extends Comparable<T>> implements AggregateFunction<T, T, T> {
+class MaxAggregate<T extends Comparable<T>> implements AggregateFunction<T, Holder<T>, T> {
     @Serial
     private static final long serialVersionUID = 1L;
 
     @Override
-    public T createAccumulator() {
-        return null;
+    public Holder<T> createAccumulator() {
+        return new Holder<>(null);
     }
 
     @Override
-    public void add(T value, T accumulator) {
-        // 不修改accumulator
+    public void add(T value, Holder<T> accumulator) {
+        if (accumulator.value == null || value.compareTo(accumulator.value) > 0) {
+            accumulator.value = value;
+        }
     }
 
     @Override
-    public T getResult(T accumulator) {
-        return accumulator;
+    public T getResult(Holder<T> accumulator) {
+        return accumulator.value;
     }
 
     @Override
-    public T merge(T a, T b) {
-        if (a == null) return b;
-        if (b == null) return a;
-        return a.compareTo(b) > 0 ? a : b;
+    public Holder<T> merge(Holder<T> a, Holder<T> b) {
+        if (a.value == null) return b;
+        if (b.value == null) return a;
+        return a.value.compareTo(b.value) > 0 ? a : b;
     }
 }
 
 // 最小值聚合
-class MinAggregate<T extends Comparable<T>> implements AggregateFunction<T, T, T> {
+class MinAggregate<T extends Comparable<T>> implements AggregateFunction<T, Holder<T>, T> {
     @Serial
     private static final long serialVersionUID = 1L;
 
     @Override
-    public T createAccumulator() {
-        return null;
+    public Holder<T> createAccumulator() {
+        return new Holder<>(null);
     }
 
     @Override
-    public void add(T value, T accumulator) {
+    public void add(T value, Holder<T> accumulator) {
+        if (accumulator.value == null || value.compareTo(accumulator.value) < 0) {
+            accumulator.value = value;
+        }
     }
 
     @Override
-    public T getResult(T accumulator) {
-        return accumulator;
+    public T getResult(Holder<T> accumulator) {
+        return accumulator.value;
     }
 
     @Override
-    public T merge(T a, T b) {
-        if (a == null) return b;
-        if (b == null) return a;
-        return a.compareTo(b) < 0 ? a : b;
+    public Holder<T> merge(Holder<T> a, Holder<T> b) {
+        if (a.value == null) return b;
+        if (b.value == null) return a;
+        return a.value.compareTo(b.value) < 0 ? a : b;
     }
 }

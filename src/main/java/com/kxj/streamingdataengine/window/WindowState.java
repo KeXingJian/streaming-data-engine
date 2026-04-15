@@ -15,20 +15,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class WindowState<K, T, ACC, R> {
 
-    /**
-     * 窗口存储：window -> key -> accumulator
-     */
-    private final LSMTree<WindowKey<K>, WindowAccumulator<T, ACC, R>> stateStore;
+    private final LSMTree<WindowKey<K>, WindowAccumulator<T, ACC, R>> stateStore; // 窗口存储：window -> key -> accumulator
 
-    /**
-     * 活跃窗口集合
-     */
-    private final Set<Window> activeWindows;
+    private final Set<Window> activeWindows; // 活跃窗口集合
 
-    /**
-     * 窗口元数据：记录数、最后更新时间等
-     */
-    private final Map<Window, WindowMetadata> metadata;
+    private final Map<Window, WindowMetadata> metadata; // 窗口元数据：记录数、最后更新时间等
 
     public WindowState() {
         this.stateStore = new LSMTree<>();

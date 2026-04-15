@@ -36,7 +36,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
     // 转换链：存储从source到当前类型的所有转换函数
     private final List<Function<?, ?>> transformations;
 
-    private final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
+    protected final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
 
     // 构造源流
     public DataStreamImpl(String jobName,DataSource<T> source) {
@@ -198,12 +198,81 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
             public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-                return parent.map(t -> aggregateFunction.getResult(aggregateFunction.createAccumulator()));
+                return new DataStreamImpl<R>(parent.jobName + "_keyedAggregate", parent.source, parent.transformations) {
+                    @Override
+                    public List<R> collect() {
+                        List<T> inputs = parent.collect();
+                        Map<K, ACC> accumulators = new HashMap<>();
+                        for (T item : inputs) {
+                            K key = keyExtractor.apply(item);
+                            ACC acc = accumulators.computeIfAbsent(key, k -> aggregateFunction.createAccumulator());
+                            aggregateFunction.add(item, acc);
+                        }
+                        List<R> results = new ArrayList<>();
+                        for (ACC acc : accumulators.values()) {
+                            results.add(aggregateFunction.getResult(acc));
+                        }
+                        return results;
+                    }
+
+                    @Override
+                    public void execute() {
+                        List<R> results = collect();
+                        for (DataSink<R> sink : sinks) {
+                            try {
+                                sink.open();
+                                for (R r : results) {
+                                    sink.write(r);
+                                }
+                            } catch (Exception e) {
+                                log.error("Sink write failed", e);
+                            } finally {
+                                try {
+                                    sink.close();
+                                } catch (Exception e) {
+                                    log.error("Sink close failed", e);
+                                }
+                            }
+                        }
+                    }
+                };
             }
 
             @Override
             public DataStream<T> reduce(BinaryOperator<T> reducer) {
-                return parent;
+                return new DataStreamImpl<T>(parent.jobName + "_keyedReduce", parent.source, parent.transformations) {
+                    @Override
+                    public List<T> collect() {
+                        List<T> inputs = parent.collect();
+                        Map<K, T> results = new HashMap<>();
+                        for (T item : inputs) {
+                            K key = keyExtractor.apply(item);
+                            results.merge(key, item, reducer);
+                        }
+                        return new ArrayList<>(results.values());
+                    }
+
+                    @Override
+                    public void execute() {
+                        List<T> results = collect();
+                        for (DataSink<T> sink : sinks) {
+                            try {
+                                sink.open();
+                                for (T r : results) {
+                                    sink.write(r);
+                                }
+                            } catch (Exception e) {
+                                log.error("Sink write failed", e);
+                            } finally {
+                                try {
+                                    sink.close();
+                                } catch (Exception e) {
+                                    log.error("Sink close failed", e);
+                                }
+                            }
+                        }
+                    }
+                };
             }
 
             @Override
@@ -291,27 +360,176 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
         public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-            return parent.map(t -> aggregateFunction.getResult(aggregateFunction.createAccumulator()));
+            return new DataStreamImpl<R>(parent.jobName + "_windowAggregate", parent.source, parent.transformations) {
+                @Override
+                public List<R> collect() {
+                    List<T> inputs = parent.collect();
+                    Map<Window, ACC> accumulators = new HashMap<>();
+                    long timestamp = System.currentTimeMillis();
+                    for (T item : inputs) {
+                        List<Window> windows = assigner.assignWindows(item, timestamp);
+                        for (Window window : windows) {
+                            ACC acc = accumulators.computeIfAbsent(window, w -> aggregateFunction.createAccumulator());
+                            aggregateFunction.add(item, acc);
+                        }
+                    }
+                    List<R> results = new ArrayList<>();
+                    for (ACC acc : accumulators.values()) {
+                        results.add(aggregateFunction.getResult(acc));
+                    }
+                    return results;
+                }
+
+                @Override
+                public void execute() {
+                    List<R> results = collect();
+                    for (DataSink<R> sink : sinks) {
+                        try {
+                            sink.open();
+                            for (R r : results) {
+                                sink.write(r);
+                            }
+                        } catch (Exception e) {
+                            log.error("Sink write failed", e);
+                        } finally {
+                            try {
+                                sink.close();
+                            } catch (Exception e) {
+                                log.error("Sink close failed", e);
+                            }
+                        }
+                    }
+                }
+            };
         }
 
         @Override
         public <ACC, R, W> DataStream<W> aggregate(AggregateFunction<T, ACC, R> aggregateFunction, Function<R, W> windowResultMapper) {
-            return parent.map(t -> windowResultMapper.apply(aggregateFunction.getResult(aggregateFunction.createAccumulator())));
+            return aggregate(aggregateFunction).map(windowResultMapper);
         }
 
         @Override
         public DataStream<T> reduce(java.util.function.BinaryOperator<T> reducer) {
-            return parent;
+            return new DataStreamImpl<T>(parent.jobName + "_windowReduce", parent.source, parent.transformations) {
+                @Override
+                public List<T> collect() {
+                    List<T> inputs = parent.collect();
+                    Map<Window, T> results = new HashMap<>();
+                    long timestamp = System.currentTimeMillis();
+                    for (T item : inputs) {
+                        List<Window> windows = assigner.assignWindows(item, timestamp);
+                        for (Window window : windows) {
+                            results.merge(window, item, reducer);
+                        }
+                    }
+                    return new ArrayList<>(results.values());
+                }
+
+                @Override
+                public void execute() {
+                    List<T> results = collect();
+                    for (DataSink<T> sink : sinks) {
+                        try {
+                            sink.open();
+                            for (T r : results) {
+                                sink.write(r);
+                            }
+                        } catch (Exception e) {
+                            log.error("Sink write failed", e);
+                        } finally {
+                            try {
+                                sink.close();
+                            } catch (Exception e) {
+                                log.error("Sink close failed", e);
+                            }
+                        }
+                    }
+                }
+            };
         }
 
         @Override
         public <R> DataStream<R> fold(R initialValue, java.util.function.BiFunction<R, T, R> folder) {
-            return parent.map(t -> folder.apply(initialValue, t));
+            return new DataStreamImpl<R>(parent.jobName + "_windowFold", parent.source, parent.transformations) {
+                @Override
+                public List<R> collect() {
+                    List<T> inputs = parent.collect();
+                    Map<Window, R> accMap = new HashMap<>();
+                    long timestamp = System.currentTimeMillis();
+                    for (T item : inputs) {
+                        List<Window> windows = assigner.assignWindows(item, timestamp);
+                        for (Window window : windows) {
+                            accMap.put(window, folder.apply(accMap.getOrDefault(window, initialValue), item));
+                        }
+                    }
+                    return new ArrayList<>(accMap.values());
+                }
+
+                @Override
+                public void execute() {
+                    List<R> results = collect();
+                    for (DataSink<R> sink : sinks) {
+                        try {
+                            sink.open();
+                            for (R r : results) {
+                                sink.write(r);
+                            }
+                        } catch (Exception e) {
+                            log.error("Sink write failed", e);
+                        } finally {
+                            try {
+                                sink.close();
+                            } catch (Exception e) {
+                                log.error("Sink close failed", e);
+                            }
+                        }
+                    }
+                }
+            };
         }
 
         @Override
         public <R> DataStream<R> apply(Function<Iterable<T>, R> windowFunction) {
-            return parent.map(t -> windowFunction.apply(List.of(t)));
+            return new DataStreamImpl<R>(parent.jobName + "_windowApply", parent.source, parent.transformations) {
+                @Override
+                public List<R> collect() {
+                    List<T> inputs = parent.collect();
+                    Map<Window, List<T>> groups = new HashMap<>();
+                    long timestamp = System.currentTimeMillis();
+                    for (T item : inputs) {
+                        List<Window> windows = assigner.assignWindows(item, timestamp);
+                        for (Window window : windows) {
+                            groups.computeIfAbsent(window, w -> new ArrayList<>()).add(item);
+                        }
+                    }
+                    List<R> results = new ArrayList<>();
+                    for (List<T> group : groups.values()) {
+                        results.add(windowFunction.apply(group));
+                    }
+                    return results;
+                }
+
+                @Override
+                public void execute() {
+                    List<R> results = collect();
+                    for (DataSink<R> sink : sinks) {
+                        try {
+                            sink.open();
+                            for (R r : results) {
+                                sink.write(r);
+                            }
+                        } catch (Exception e) {
+                            log.error("Sink write failed", e);
+                        } finally {
+                            try {
+                                sink.close();
+                            } catch (Exception e) {
+                                log.error("Sink close failed", e);
+                            }
+                        }
+                    }
+                }
+            };
         }
 
         // 委托方法

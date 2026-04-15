@@ -11,10 +11,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
  */
 class MemTable<K extends Comparable<K>, V> {
 
-    /**
-     * 底层存储 - 线程安全的跳表
-     */
-    private final NavigableMap<K, Entry<V>> data;
+    private final NavigableMap<K, Entry<V>> data; // 底层存储 - 线程安全的跳表
 
     /**
      * 估计内存大小

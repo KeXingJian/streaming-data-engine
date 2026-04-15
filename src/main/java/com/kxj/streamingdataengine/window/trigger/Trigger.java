@@ -3,6 +3,7 @@ package com.kxj.streamingdataengine.window.trigger;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.core.model.Watermark;
 import com.kxj.streamingdataengine.window.Window;
+import lombok.Getter;
 
 import java.io.Serializable;
 
@@ -38,6 +39,7 @@ public interface Trigger<T> extends Serializable {
     /**
      * 触发器结果
      */
+    @Getter
     enum TriggerResult {
         /**
          * 不触发，保留窗口
@@ -67,12 +69,5 @@ public interface Trigger<T> extends Serializable {
             this.purge = purge;
         }
 
-        public boolean isFire() {
-            return fire;
-        }
-
-        public boolean isPurge() {
-            return purge;
-        }
     }
 }

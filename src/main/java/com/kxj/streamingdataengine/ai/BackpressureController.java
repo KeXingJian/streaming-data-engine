@@ -36,41 +36,14 @@ public class BackpressureController {
     private static final long LATENCY_MEDIUM_THRESHOLD = 500;
     private static final long LATENCY_HIGH_THRESHOLD = 1000;
 
-    /**
-     * 当前压力等级
-     */
     @Getter
-    private final AtomicReference<PressureLevel> currentLevel;
-
-    /**
-     * 当前限流速率（记录/秒）
-     */
-    private final AtomicInteger currentRateLimit;
-
-    /**
-     * 采样队列
-     */
-    private final ConcurrentLinkedQueue<Sample> samples;
-
-    /**
-     * 队列大小监控
-     */
-    private final AtomicInteger monitoredQueueSize;
-
-    /**
-     * 统计信息
-     */
-    private final Statistics statistics;
-
-    /**
-     * 自适应PID控制器参数
-     */
-    private final PIDController pidController;
-
-    /**
-     * 目标延迟
-     */
-    private final long targetLatencyMs;
+    private final AtomicReference<PressureLevel> currentLevel;  // 当前压力等级
+    private final AtomicInteger currentRateLimit;               // 当前限流速率（记录/秒）
+    private final ConcurrentLinkedQueue<Sample> samples;        // 采样队列
+    private final AtomicInteger monitoredQueueSize;             // 队列大小监控
+    private final Statistics statistics;                        // 统计信息
+    private final PIDController pidController;                  // 自适应PID控制器
+    private final long targetLatencyMs;                         // 目标延迟
 
     public BackpressureController() {
         this(500); // 默认目标延迟500ms

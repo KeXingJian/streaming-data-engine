@@ -4,7 +4,11 @@
       "mcp__ide__getDiagnostics",
       "Bash(./mvnw test:*)",
       "Bash(./mvnw compile:*)",
-      "Bash(ls -la mvnw*)"
+      "Bash(ls -la mvnw*)",
+      "Bash(perl:*)",
+      "Bash(for f:*)",
+      "Bash(do)",
+      "Bash(done)"
     ]
   }
 }

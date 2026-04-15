@@ -22,46 +22,22 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 @Slf4j
 public class LSMTree<K extends Comparable<K>, V> {
 
-    /**
-     * 内存表配置
-     */
-    private final int memTableSize;
+    private final int memTableSize; // 内存表配置
     private final int maxSegmentCount;
 
-    /**
-     * 当前活跃MemTable
-     */
-    private volatile MemTable<K, V> activeMemTable;
+    private volatile MemTable<K, V> activeMemTable; // 当前活跃MemTable
 
-    /**
-     * 只读MemTable（等待刷盘）
-     */
-    private final List<MemTable<K, V>> immutableMemTables;
+    private final List<MemTable<K, V>> immutableMemTables; // 只读MemTable（等待刷盘）
 
-    /**
-     * 磁盘Segment
-     */
-    private final List<Segment<K, V>> segments;
+    private final List<Segment<K, V>> segments; // 磁盘Segment
 
-    /**
-     * 全局序列号生成器
-     */
-    private final AtomicLong sequenceNumber;
+    private final AtomicLong sequenceNumber; // 全局序列号生成器
 
-    /**
-     * 读写锁
-     */
-    private final ReadWriteLock lock;
+    private final ReadWriteLock lock; // 读写锁
 
-    /**
-     * Compaction策略
-     */
-    private final CompactionStrategy compactionStrategy;
+    private final CompactionStrategy compactionStrategy; // Compaction策略
 
-    /**
-     * WAL（预写日志）
-     */
-    private final WriteAheadLog wal;
+    private final WriteAheadLog wal; // WAL（预写日志）
 
     public LSMTree() {
         this(64 * 1024 * 1024, 10, new SizeTieredCompaction(), null); // 64MB默认

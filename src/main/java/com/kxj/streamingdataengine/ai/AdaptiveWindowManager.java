@@ -12,12 +12,11 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 自适应窗口管理器
- * 基于数据特征学习，动态调整窗口大小
+ * 基于 Little's Law (L = λW) + PID 控制器动态调整窗口大小
  * 核心算法：
  * 1. 数据到达率分析（流量预测）
  * 2. 事件时间分布分析（乱序程度）
- * 3. 使用EWMA（指数加权移动平均）预测
- * 4. 强化学习调整窗口参数
+ * 3. PID 控制器平滑窗口参数调整
  */
 @Slf4j
 public class AdaptiveWindowManager {
@@ -34,7 +33,6 @@ public class AdaptiveWindowManager {
     @Getter
     private volatile Duration maxOutOfOrderness;           // 允许的最大乱序时间
     private final StatisticsCollector statisticsCollector; // 历史数据统计
-    private final AdaptiveModel model;                     // 机器学习模型（简化版使用EWMA和启发式规则）
     private final Queue<Long> latencySamples;              // 最近的事件延迟样本
     private static final int MAX_SAMPLES = 1000;           // 样本数量限制
     private final AtomicLong lastAdjustmentTime;           // 调整频率控制
@@ -45,7 +43,6 @@ public class AdaptiveWindowManager {
         this.currentWindowSize = initialWindowSize;
         this.maxOutOfOrderness = Duration.ofSeconds(5);
         this.statisticsCollector = new StatisticsCollector();
-        this.model = new AdaptiveModel();
         this.latencySamples = new ConcurrentLinkedQueue<>();
         this.lastAdjustmentTime = new AtomicLong(0);
         this.pidController = new PIDController(0.3, 0.05, 0.02);
@@ -95,7 +92,7 @@ public class AdaptiveWindowManager {
         double arrivalRate = statisticsCollector.getArrivalRate();
 
         // 使用Little's Law + PID预测最优窗口大小
-        long optimalWindowSize = predictOptimalWindowSizeV2(
+        long optimalWindowSize = predictOptimalWindowSize(
                 medianLatency, p95Latency, p99Latency, arrivalRate,
                 currentWindowSize.toMillis()
         );
@@ -126,7 +123,7 @@ public class AdaptiveWindowManager {
      * 基于Little's Law + PID控制器的窗口大小预测（V2）
      * 理论背书：排队论 Little's Law (L = λW) + 控制论 PID 平滑
      */
-    public long predictOptimalWindowSizeV2(double medianLatency, double p95Latency,
+    public long predictOptimalWindowSize(double medianLatency, double p95Latency,
                                               double p99Latency, double arrivalRate,
                                               long currentWindowSize) {
         // Little's Law: 在目标延迟下，系统需要缓冲的时间跨度
@@ -148,15 +145,6 @@ public class AdaptiveWindowManager {
     }
 
     /**
-     * 旧版启发式规则预测（Legacy对照）
-     */
-    public long predictOptimalWindowSizeLegacy(double medianLatency, double p95Latency,
-                                                double p99Latency, double arrivalRate,
-                                                long currentWindowSize) {
-        return model.predictOptimalWindowSize(medianLatency, p95Latency, p99Latency, arrivalRate, currentWindowSize);
-    }
-
-    /**
      * 为事件分配窗口
      */
     public List<Window> assignWindows(long timestamp) {
@@ -170,55 +158,6 @@ public class AdaptiveWindowManager {
      */
     public long getRecommendedWatermarkDelayMs() {
         return maxOutOfOrderness.toMillis();
-    }
-
-    /**
-     * 自适应模型（简化实现）
-     */
-    private static class AdaptiveModel {
-
-        /**
-         * 预测最优窗口大小
-         * 策略：
-         * 1. 低延迟 + 高吞吐：大窗口
-         * 2. 高延迟 + 低吞吐：小窗口
-         * 3. 乱序严重：增加乱序容忍度
-         */
-        public long predictOptimalWindowSize(double medianLatency, double p95Latency,
-                                              double p99Latency, double arrivalRate,
-                                              long currentWindowSize) {
-            // 基于延迟调整
-            double latencyFactor;
-            if (p99Latency > 10000) { // 延迟超过10秒
-                latencyFactor = 0.5; // 减小窗口
-            } else if (p95Latency < 100) { // 延迟很低
-                latencyFactor = 2.0; // 增大窗口
-            } else {
-                latencyFactor = 1.0;
-            }
-
-            // 基于到达率调整
-            double rateFactor;
-            if (arrivalRate > 10000) { // 高吞吐
-                rateFactor = 1.5; // 大窗口，减少触发次数
-            } else if (arrivalRate < 100) { // 低吞吐
-                rateFactor = 0.8; // 小窗口，更快输出
-            } else {
-                rateFactor = 1.0;
-            }
-
-            // 综合计算
-            long predicted = (long) (currentWindowSize * latencyFactor * rateFactor);
-
-            // 根据乱序程度微调
-            double disorderRatio = p99Latency / Math.max(medianLatency, 1);
-            if (disorderRatio > 5) {
-                // 乱序严重，稍微增大窗口以等待更多数据
-                predicted = (long) (predicted * 1.2);
-            }
-
-            return predicted;
-        }
     }
 
     /**

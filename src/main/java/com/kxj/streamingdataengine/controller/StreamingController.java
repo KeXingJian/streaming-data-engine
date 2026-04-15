@@ -1,19 +1,16 @@
 package com.kxj.streamingdataengine.controller;
 
+
 import com.kxj.streamingdataengine.aggregation.AggregateFunction;
-import com.kxj.streamingdataengine.core.model.StreamRecord;
-import com.kxj.streamingdataengine.execution.ExecutionEngine;
 import com.kxj.streamingdataengine.sink.CollectSink;
-import com.kxj.streamingdataengine.sink.ConsoleSink;
 import com.kxj.streamingdataengine.stream.StreamBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Duration;
+import java.io.Serial;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 /**
  * 流处理引擎REST接口
@@ -56,21 +53,49 @@ public class StreamingController {
     public Map<String, Object> aggregateDemo() {
         List<Double> temperatures = generateTemperatureData(100);
 
-        // 手动计算统计
-        double sum = temperatures.stream().mapToDouble(Double::doubleValue).sum();
-        double avg = sum / temperatures.size();
-        double max = temperatures.stream().mapToDouble(Double::doubleValue).max().orElse(0);
-        double min = temperatures.stream().mapToDouble(Double::doubleValue).min().orElse(0);
+        // 使用项目流式引擎做全局聚合
+        CollectSink<Map<String, Object>> sink = new CollectSink<>();
+
+        StreamBuilder builder = new StreamBuilder("aggregate-demo");
+        builder.fromCollection(temperatures)
+                .keyBy(t -> "global")
+                .aggregate(new AggregateFunction<Double, StatsAccumulator, Map<String, Object>>() {
+                    @Serial
+                    private static final long serialVersionUID = 1L;
+
+                    @Override
+                    public StatsAccumulator createAccumulator() {
+                        return new StatsAccumulator();
+                    }
+
+                    @Override
+                    public void add(Double value, StatsAccumulator accumulator) {
+                        accumulator.add(value);
+                    }
+
+                    @Override
+                    public Map<String, Object> getResult(StatsAccumulator accumulator) {
+                        return accumulator.toMap();
+                    }
+
+                    @Override
+                    public StatsAccumulator merge(StatsAccumulator a, StatsAccumulator b) {
+                        a.merge(b);
+                        return a;
+                    }
+                })
+                .addSink(sink)
+                .execute();
+
+        Map<String, Object> stats = sink.getCollected().isEmpty()
+                ? Map.of()
+                : sink.getCollected().get(0);
 
         return Map.of(
                 "dataCount", temperatures.size(),
-                "statistics", Map.of(
-                        "sum", String.format("%.2f", sum),
-                        "average", String.format("%.2f", avg),
-                        "max", String.format("%.2f", max),
-                        "min", String.format("%.2f", min)
-                ),
-                "sampleData", temperatures.subList(0, 10)
+                "statistics", stats,
+                "sampleData", temperatures.subList(0, 10),
+                "description", "使用StreamBuilder keyBy+aggregate流式聚合"
         );
     }
 
@@ -146,5 +171,41 @@ public class StreamingController {
             data.add(20 + random.nextDouble() * 15);
         }
         return data;
+    }
+
+    /**
+     * 统计累加器
+     */
+    private static class StatsAccumulator implements java.io.Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+
+        double sum;
+        double max = Double.MIN_VALUE;
+        double min = Double.MAX_VALUE;
+        long count;
+
+        void add(double value) {
+            sum += value;
+            max = Math.max(max, value);
+            min = Math.min(min, value);
+            count++;
+        }
+
+        void merge(StatsAccumulator other) {
+            sum += other.sum;
+            max = Math.max(max, other.max);
+            min = Math.min(min, other.min);
+            count += other.count;
+        }
+
+        Map<String, Object> toMap() {
+            return Map.of(
+                    "sum", String.format("%.2f", sum),
+                    "average", String.format("%.2f", count == 0 ? 0.0 : sum / count),
+                    "max", String.format("%.2f", max == Double.MIN_VALUE ? 0.0 : max),
+                    "min", String.format("%.2f", min == Double.MAX_VALUE ? 0.0 : min)
+            );
+        }
     }
 }

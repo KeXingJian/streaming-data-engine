@@ -19,15 +19,9 @@ public abstract class Window implements Comparable<Window>, Serializable {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    /**
-     * 窗口开始时间
-     */
-    protected final long start;
+    protected final long start; // 窗口开始时间
 
-    /**
-     * 窗口结束时间（不包含）
-     */
-    protected final long end;
+    protected final long end; // 窗口结束时间（不包含）
 
     protected Window(long start, long end) {
         this.start = start;

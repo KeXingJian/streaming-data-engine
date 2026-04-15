@@ -8,7 +8,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /**
  * 异常流量检测器
  * 基于统计方法和机器学习检测流量异常
- *
  * 检测方法：
  * 1. 基于3-sigma原则的统计异常检测
  * 2. 基于滑动窗口的变化率检测
@@ -21,25 +20,13 @@ public class AnomalyDetector {
     private static final int WINDOW_SIZE = 1000; // 滑动窗口大小，支持更多样本
     private static final int HISTORY_SIZE = 1440; // 保存24小时历史数据
 
-    /**
-     * 流量历史记录
-     */
-    private final Queue<TrafficRecord> trafficHistory;
+    private final Queue<TrafficRecord> trafficHistory; // 流量历史记录
 
-    /**
-     * 当前窗口统计
-     */
-    private final SlidingWindowStatistics currentStats;
+    private final SlidingWindowStatistics currentStats; // 当前窗口统计
 
-    /**
-     * 检测器配置
-     */
-    private final DetectionConfig config;
+    private final DetectionConfig config; // 检测器配置
 
-    /**
-     * 告警处理器
-     */
-    private final AlertHandler alertHandler;
+    private final AlertHandler alertHandler; // 告警处理器
 
     public AnomalyDetector(AlertHandler alertHandler) {
         this(DetectionConfig.defaultConfig(), alertHandler);

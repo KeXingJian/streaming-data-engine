@@ -23,41 +23,20 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 public class MergeTreeAggregator<K extends Comparable<K>, T, ACC, R> {
 
-    /**
-     * 聚合函数
-     */
-    private final AggregateFunction<T, ACC, R> aggregateFunction;
+    private final AggregateFunction<T, ACC, R> aggregateFunction; // 聚合函数
 
-    /**
-     * 分区存储：分区键 -> LSMTree
-     */
-    private final Map<String, LSMTree<CompositeKey<K>, AggregatedValue<T, ACC, R>>> partitions;
+    private final Map<String, LSMTree<CompositeKey<K>, AggregatedValue<T, ACC, R>>> partitions; // 分区存储：分区键 -> LSMTree
 
-    /**
-     * 活跃分区（正在写入）
-     */
-    private final Set<String> activePartitions;
+    private final Set<String> activePartitions; // 活跃分区（正在写入）
 
-    /**
-     * 分区键提取器
-     */
-    private final PartitionKeyExtractor<T> partitionKeyExtractor;
+    private final PartitionKeyExtractor<T> partitionKeyExtractor; // 分区键提取器
 
-    /**
-     * 主键提取器
-     */
-    private final PrimaryKeyExtractor<T, K> primaryKeyExtractor;
+    private final PrimaryKeyExtractor<T, K> primaryKeyExtractor; // 主键提取器
 
-    /**
-     * 后台合并线程
-     */
-    private final Thread mergeThread;
+    private final Thread mergeThread; // 后台合并线程
     private volatile boolean running = true;
 
-    /**
-     * 统计信息
-     */
-    private final AtomicLong totalRecords;
+    private final AtomicLong totalRecords; // 统计信息
     private final AtomicLong aggregatedRecords;
 
     public MergeTreeAggregator(
