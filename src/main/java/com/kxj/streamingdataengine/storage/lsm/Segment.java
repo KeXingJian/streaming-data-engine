@@ -1,5 +1,6 @@
 package com.kxj.streamingdataengine.storage.lsm;
 
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.*;
@@ -22,10 +23,12 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
     private static final int INDEX_INTERVAL = 128; // 每128条记录一个索引
 
     private final Path dataFile;
+    @Getter
     private final Path indexFile;
     private final long minKey;
     private final long maxKey;
     private final long sequenceNumber;
+    @Getter
     private final long entryCount;
     private final long size;
 
@@ -254,7 +257,6 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private static <K> byte[] serializeKey(K key) throws IOException {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
              ObjectOutputStream oos = new ObjectOutputStream(baos)) {
@@ -263,7 +265,6 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private static <V> byte[] serializeValue(V value) throws IOException {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
              ObjectOutputStream oos = new ObjectOutputStream(baos)) {
@@ -300,67 +301,52 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
         return size;
     }
 
-    public long getEntryCount() {
-        return entryCount;
-    }
-
     @Override
     public int compareTo(Segment<K, V> other) {
         return Long.compare(this.sequenceNumber, other.sequenceNumber);
     }
 
     /**
-     * 条目数据结构
-     */
-    private static class EntryData {
-        final byte[] keyBytes;
-        final byte[] valueBytes;
-        final long sequenceNumber;
-        final boolean isDeleted;
-
-        EntryData(byte[] keyBytes, byte[] valueBytes, long sequenceNumber, boolean isDeleted) {
-            this.keyBytes = keyBytes;
-            this.valueBytes = valueBytes;
-            this.sequenceNumber = sequenceNumber;
-            this.isDeleted = isDeleted;
-        }
+         * 条目数据结构
+         */
+        private record EntryData(byte[] keyBytes, byte[] valueBytes, long sequenceNumber, boolean isDeleted) {
 
         int getSerializedSize() {
-            return 4 + keyBytes.length + // key长度 + key
-                   1 + // isDeleted标记
-                   8 + // sequenceNumber
-                   (isDeleted ? 0 : 4 + (valueBytes != null ? valueBytes.length : 0)); // value
-        }
-
-        ByteBuffer serialize() {
-            ByteBuffer buffer = ByteBuffer.allocate(getSerializedSize());
-            buffer.putInt(keyBytes.length);
-            buffer.put(keyBytes);
-            buffer.put((byte) (isDeleted ? 1 : 0));
-            buffer.putLong(sequenceNumber);
-            if (!isDeleted) {
-                buffer.putInt(valueBytes.length);
-                buffer.put(valueBytes);
-            }
-            buffer.flip();
-            return buffer;
-        }
-
-        static EntryData deserialize(ByteBuffer buffer) {
-            int keyLen = buffer.getInt();
-            byte[] keyBytes = new byte[keyLen];
-            buffer.get(keyBytes);
-            boolean isDeleted = buffer.get() != 0;
-            long sequenceNumber = buffer.getLong();
-
-            byte[] valueBytes = null;
-            if (!isDeleted) {
-                int valueLen = buffer.getInt();
-                valueBytes = new byte[valueLen];
-                buffer.get(valueBytes);
+                return 4 + keyBytes.length + // key长度 + key
+                        1 + // isDeleted标记
+                        8 + // sequenceNumber
+                        (isDeleted ? 0 : 4 + (valueBytes != null ? valueBytes.length : 0)); // value
             }
 
-            return new EntryData(keyBytes, valueBytes, sequenceNumber, isDeleted);
+            ByteBuffer serialize() {
+                ByteBuffer buffer = ByteBuffer.allocate(getSerializedSize());
+                buffer.putInt(keyBytes.length);
+                buffer.put(keyBytes);
+                buffer.put((byte) (isDeleted ? 1 : 0));
+                buffer.putLong(sequenceNumber);
+                if (!isDeleted && valueBytes != null) {
+                    buffer.putInt(valueBytes.length);
+                    buffer.put(valueBytes);
+                }
+                buffer.flip();
+                return buffer;
+            }
+
+            static EntryData deserialize(ByteBuffer buffer) {
+                int keyLen = buffer.getInt();
+                byte[] keyBytes = new byte[keyLen];
+                buffer.get(keyBytes);
+                boolean isDeleted = buffer.get() != 0;
+                long sequenceNumber = buffer.getLong();
+
+                byte[] valueBytes = null;
+                if (!isDeleted) {
+                    int valueLen = buffer.getInt();
+                    valueBytes = new byte[valueLen];
+                    buffer.get(valueBytes);
+                }
+
+                return new EntryData(keyBytes, valueBytes, sequenceNumber, isDeleted);
+            }
         }
-    }
 }

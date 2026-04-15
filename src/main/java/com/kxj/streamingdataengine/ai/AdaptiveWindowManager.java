@@ -13,7 +13,6 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * 自适应窗口管理器
  * 基于数据特征学习，动态调整窗口大小
- *
  * 核心算法：
  * 1. 数据到达率分析（流量预测）
  * 2. 事件时间分布分析（乱序程度）
@@ -27,6 +26,9 @@ public class AdaptiveWindowManager {
     private static final long MAX_WINDOW_SIZE_MS = 300000; // 5分钟
     private static final double LEARNING_RATE = 0.1;
 
+    // Little's Law + PID 参数
+    private static final long TARGET_LATENCY_MS = 2000;
+
     @Getter
     private volatile Duration currentWindowSize;           // 当前窗口大小
     @Getter
@@ -37,6 +39,7 @@ public class AdaptiveWindowManager {
     private static final int MAX_SAMPLES = 1000;           // 样本数量限制
     private final AtomicLong lastAdjustmentTime;           // 调整频率控制
     private static final long MIN_ADJUSTMENT_INTERVAL_MS = 10000; // 10秒
+    private final PIDController pidController;             // PID控制器用于平滑窗口调整
 
     public AdaptiveWindowManager(Duration initialWindowSize) {
         this.currentWindowSize = initialWindowSize;
@@ -45,6 +48,7 @@ public class AdaptiveWindowManager {
         this.model = new AdaptiveModel();
         this.latencySamples = new ConcurrentLinkedQueue<>();
         this.lastAdjustmentTime = new AtomicLong(0);
+        this.pidController = new PIDController(0.3, 0.05, 0.02);
     }
 
     /**
@@ -90,8 +94,8 @@ public class AdaptiveWindowManager {
         // 计算到达率
         double arrivalRate = statisticsCollector.getArrivalRate();
 
-        // 使用模型预测最优窗口大小
-        long optimalWindowSize = model.predictOptimalWindowSize(
+        // 使用Little's Law + PID预测最优窗口大小
+        long optimalWindowSize = predictOptimalWindowSizeV2(
                 medianLatency, p95Latency, p99Latency, arrivalRate,
                 currentWindowSize.toMillis()
         );
@@ -119,6 +123,40 @@ public class AdaptiveWindowManager {
     }
 
     /**
+     * 基于Little's Law + PID控制器的窗口大小预测（V2）
+     * 理论背书：排队论 Little's Law (L = λW) + 控制论 PID 平滑
+     */
+    public long predictOptimalWindowSizeV2(double medianLatency, double p95Latency,
+                                              double p99Latency, double arrivalRate,
+                                              long currentWindowSize) {
+        // Little's Law: 在目标延迟下，系统需要缓冲的时间跨度
+        double optimalSize = TARGET_LATENCY_MS * arrivalRate / 1000.0;
+
+        // PID 修正：根据当前延迟与目标延迟的偏差进行平滑调整
+        double latencyError = (TARGET_LATENCY_MS - medianLatency) / (double) TARGET_LATENCY_MS;
+        double pidAdjustment = pidController.calculate(latencyError);
+
+        long predicted = (long) (optimalSize * (1 + pidAdjustment));
+
+        // 乱序补偿：p99/median 衡量尾部膨胀
+        double disorderRatio = p99Latency / Math.max(medianLatency, 1);
+        if (disorderRatio > 3.0) {
+            predicted = (long) (predicted * (1 + Math.min((disorderRatio - 3) * 0.1, 0.3)));
+        }
+
+        return predicted;
+    }
+
+    /**
+     * 旧版启发式规则预测（Legacy对照）
+     */
+    public long predictOptimalWindowSizeLegacy(double medianLatency, double p95Latency,
+                                                double p99Latency, double arrivalRate,
+                                                long currentWindowSize) {
+        return model.predictOptimalWindowSize(medianLatency, p95Latency, p99Latency, arrivalRate, currentWindowSize);
+    }
+
+    /**
      * 为事件分配窗口
      */
     public List<Window> assignWindows(long timestamp) {
@@ -141,7 +179,6 @@ public class AdaptiveWindowManager {
 
         /**
          * 预测最优窗口大小
-         *
          * 策略：
          * 1. 低延迟 + 高吞吐：大窗口
          * 2. 高延迟 + 低吞吐：小窗口
@@ -206,6 +243,34 @@ public class AdaptiveWindowManager {
 
         double getArrivalRate() {
             return currentRate;
+        }
+    }
+
+    /**
+     * PID控制器
+     * 用于平滑窗口调整，避免剧烈震荡
+     */
+    private static class PIDController {
+        private final double kp, ki, kd;
+        private double integral;
+        private double lastError;
+
+        PIDController(double kp, double ki, double kd) {
+            this.kp = kp;
+            this.ki = ki;
+            this.kd = kd;
+        }
+
+        double calculate(double error) {
+            integral += error;
+            double derivative = error - lastError;
+            lastError = error;
+            return kp * error + ki * integral + kd * derivative;
+        }
+
+        void reset() {
+            integral = 0;
+            lastError = 0;
         }
     }
 }

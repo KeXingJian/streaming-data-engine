@@ -118,6 +118,58 @@ public class AdaptiveWindowManagerTest {
         });
     }
 
+    @Test
+    @DisplayName("Little's Law + PID 方案与旧启发式方案对比证明")
+    void testLittleLawPidVsLegacy() {
+        log.info("[kxj: 自适应窗口算法对比测试 - Little's Law+PID vs 启发式规则]");
+
+        long currentWindowSize = 10_000;
+
+        // 场景A：低延迟 + 高吞吐
+        // 旧方法：p95<100 -> x2.0, rate>10000 -> x1.5 => 30000
+        // 新方法：Little's Law 预测 optimalSize = 2000 * 20000 / 1000 = 40000ms
+        //         延迟远低于目标，PID 正向修正 => 显著 > Legacy
+        AdaptiveWindowManager managerA = new AdaptiveWindowManager(Duration.ofSeconds(10));
+        long legacyA = managerA.predictOptimalWindowSizeLegacy(50, 80, 150, 20000, currentWindowSize);
+        long v2A = managerA.predictOptimalWindowSizeV2(50, 80, 150, 20000, currentWindowSize);
+        log.info("[kxj: 场景A 低延迟高吞吐] legacy={}, v2={}", legacyA, v2A);
+        assertTrue(v2A > legacyA,
+                "高吞吐场景下，Little's Law 应预测出更大的缓冲窗口");
+
+        // 场景B：高延迟 + 低吞吐
+        // 旧方法：p99>10000 -> x0.5, rate<100 -> x0.8 => 4000
+        // 新方法：Little's Law 预测 optimalSize = 2000 * 10 / 1000 = 20ms
+        //         延迟远超目标，PID 负向修正 => 快速收缩到最小
+        AdaptiveWindowManager managerB = new AdaptiveWindowManager(Duration.ofSeconds(10));
+        long legacyB = managerB.predictOptimalWindowSizeLegacy(5000, 8000, 15000, 10, currentWindowSize);
+        long v2B = managerB.predictOptimalWindowSizeV2(5000, 8000, 15000, 10, currentWindowSize);
+        log.info("[kxj: 场景B 高延迟低吞吐] legacy={}, v2={}", legacyB, v2B);
+        assertTrue(v2B < legacyB,
+                "高延迟场景下，PID 应快速收缩窗口以降低等待时间");
+
+        // 场景C：平滑性对比 — 延迟微小变化时，Legacy 阶梯不变，V2 连续变化
+        AdaptiveWindowManager managerC1 = new AdaptiveWindowManager(Duration.ofSeconds(10));
+        AdaptiveWindowManager managerC2 = new AdaptiveWindowManager(Duration.ofSeconds(10));
+        long legacyC1 = managerC1.predictOptimalWindowSizeLegacy(1000, 3000, 5000, 5000, currentWindowSize);
+        long legacyC2 = managerC2.predictOptimalWindowSizeLegacy(1100, 3000, 5000, 5000, currentWindowSize);
+        long v2C1 = managerC1.predictOptimalWindowSizeV2(1000, 3000, 5000, 5000, currentWindowSize);
+        long v2C2 = managerC2.predictOptimalWindowSizeV2(1100, 3000, 5000, 5000, currentWindowSize);
+        log.info("[kxj: 场景C 平滑性对比] legacyC1={}, legacyC2={}, v2C1={}, v2C2={}",
+                legacyC1, legacyC2, v2C1, v2C2);
+        assertEquals(legacyC1, legacyC2,
+                "旧方法在阈值未跨越时应输出相同的离散值");
+        assertNotEquals(v2C1, v2C2,
+                "新方法基于 PID 应在输入微小变化时产生平滑连续的输出");
+
+        // 场景D：数学一致性 — 当延迟等于目标延迟且无乱序时，V2 应严格等于 Little's Law 理论值
+        AdaptiveWindowManager managerD = new AdaptiveWindowManager(Duration.ofSeconds(10));
+        long v2D = managerD.predictOptimalWindowSizeV2(2000, 2000, 2000, 5000, currentWindowSize);
+        long expectedLittleLaw = 2000L * 5000 / 1000; // 10000
+        log.info("[kxj: 场景D Little's Law 一致性] expected={}, actual={}", expectedLittleLaw, v2D);
+        assertEquals(expectedLittleLaw, v2D,
+                "延迟等于目标值时，PID 修正应为 0，预测值应严格等于 Little's Law 理论值");
+    }
+
     private StreamRecord<String> createRecord(long latency) {
         long now = System.currentTimeMillis();
         return StreamRecord.<String>builder()
