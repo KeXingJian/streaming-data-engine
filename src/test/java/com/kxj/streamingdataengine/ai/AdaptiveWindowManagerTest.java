@@ -12,12 +12,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 自适应窗口管理器测试
  */
 @Slf4j
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class AdaptiveWindowManagerTest {
 
     @Test

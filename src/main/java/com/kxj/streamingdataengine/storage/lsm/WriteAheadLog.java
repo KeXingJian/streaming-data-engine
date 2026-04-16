@@ -89,8 +89,8 @@ public class WriteAheadLog implements Closeable {
     }
 
     private void writeEntry(LogEntry entry) throws IOException {
-        byte[] keyBytes = serialize(entry.key);
-        byte[] valueBytes = entry.value != null ? serialize(entry.value) : null;
+        byte[] keyBytes = ObjectSerializer.serialize(entry.key);
+        byte[] valueBytes = entry.value != null ? ObjectSerializer.serialize(entry.value) : null;
 
         int valueSize = valueBytes != null ? valueBytes.length : 0;
         int totalSize = 1 + 4 + keyBytes.length + 4 + valueSize; // type + keylen + key + valuelen + value
@@ -182,13 +182,13 @@ public class WriteAheadLog implements Closeable {
                 int keyLen = dataBuffer.getInt();
                 byte[] keyBytes = new byte[keyLen];
                 dataBuffer.get(keyBytes);
-                Object key = deserialize(keyBytes);
+                Object key = ObjectSerializer.deserialize(keyBytes);
 
                 if (type == LogEntry.Type.PUT) {
                     int valueLen = dataBuffer.getInt();
                     byte[] valueBytes = new byte[valueLen];
                     dataBuffer.get(valueBytes);
-                    Object value = deserialize(valueBytes);
+                    Object value = ObjectSerializer.deserialize(valueBytes);
                     handler.onPut(key, value);
                 } else {
                     handler.onDelete(key);
@@ -204,25 +204,6 @@ public class WriteAheadLog implements Closeable {
      */
     public void clear() throws IOException {
         channel.truncate(0);
-    }
-
-    private byte[] serialize(Object obj) throws IOException {
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
-             ObjectOutputStream oos = new ObjectOutputStream(baos)) {
-            oos.writeObject(obj);
-            return baos.toByteArray();
-        }
-    }
-
-    private Object deserialize(byte[] bytes) throws IOException {
-        try (ObjectInputStream ois = new ObjectInputStream(
-                new ByteArrayInputStream(bytes))) {
-            try {
-                return ois.readObject();
-            } catch (ClassNotFoundException e) {
-                throw new IOException(e);
-            }
-        }
     }
 
     @Override

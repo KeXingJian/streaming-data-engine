@@ -9,12 +9,15 @@ import java.util.Random;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 背压控制器测试
  */
 @Slf4j
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class BackpressureControllerTest {
 
     @Test
@@ -28,7 +31,7 @@ public class BackpressureControllerTest {
         // 初始状态
         BackpressureController.SystemStatus status1 = controller.getStatus();
         log.info("初始状态: {}", status1);
-        assertEquals(BackpressureController.PressureLevel.NORMAL, status1.pressureLevel());
+        assertEquals(SeverityLevel.NORMAL, status1.pressureLevel());
 
         // 模拟高负载（长延迟+大队列）
         for (int i = 0; i < 50; i++) {
@@ -98,7 +101,7 @@ public class BackpressureControllerTest {
         log.info("高压力状态: level={}, limit={}",
                 highStatus.pressureLevel(), highStatus.rateLimit());
 
-        assertNotEquals(BackpressureController.PressureLevel.NORMAL, highStatus.pressureLevel());
+        assertNotEquals(SeverityLevel.NORMAL, highStatus.pressureLevel());
 
         // 恢复正常
         controller.setQueueSize(100);

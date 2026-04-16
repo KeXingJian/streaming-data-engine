@@ -92,13 +92,13 @@ public class AnomalyDetector {
         if (isChangeRateAnomaly) anomalyScore += 2;
         if (isSeasonalAnomaly) anomalyScore += 1;
 
-        AnomalyLevel level = AnomalyLevel.NORMAL;
+        SeverityLevel level = SeverityLevel.NORMAL;
         if (anomalyScore >= 3) {
-            level = AnomalyLevel.CRITICAL;
+            level = SeverityLevel.CRITICAL;
         } else if (anomalyScore == 2) {
-            level = AnomalyLevel.HIGH;
+            level = SeverityLevel.HIGH;
         } else if (anomalyScore == 1) {
-            level = AnomalyLevel.MEDIUM;
+            level = SeverityLevel.MEDIUM;
         }
 
         return new AnomalyResult(
@@ -200,20 +200,8 @@ public class AnomalyDetector {
 
     @lombok.AllArgsConstructor
     @lombok.Getter
-    public enum AnomalyLevel {
-        NORMAL(0),
-        MEDIUM(1),
-        HIGH(2),
-        CRITICAL(3);
-
-        private final int severity;
-    }
-
-    @lombok.AllArgsConstructor
-    @lombok.Getter
-    @lombok.ToString
     public static class AnomalyResult {
-        private final AnomalyLevel level;
+        private final SeverityLevel level;
         private final double currentValue;
         private final double baseline;
         private final double zScore;
@@ -222,7 +210,7 @@ public class AnomalyDetector {
         private final long timestamp;
 
         public boolean isAnomaly() {
-            return level != AnomalyLevel.NORMAL;
+            return level != SeverityLevel.NORMAL;
         }
     }
 

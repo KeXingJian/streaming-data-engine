@@ -89,7 +89,7 @@ public class StreamingController {
 
         Map<String, Object> stats = sink.getCollected().isEmpty()
                 ? Map.of()
-                : sink.getCollected().get(0);
+                : sink.getCollected().getFirst();
 
         return Map.of(
                 "dataCount", temperatures.size(),

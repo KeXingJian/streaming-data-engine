@@ -85,9 +85,6 @@ public abstract class Window implements Comparable<Window>, Serializable {
      * 时间窗口
      */
     public static class TimeWindow extends Window {
-        @Serial
-        private static final long serialVersionUID = 1L;
-
         public TimeWindow(long start, long end) {
             super(start, end);
         }
@@ -97,8 +94,6 @@ public abstract class Window implements Comparable<Window>, Serializable {
      * 全局窗口（只有一个窗口）
      */
     public static class GlobalWindow extends Window {
-        @Serial
-        private static final long serialVersionUID = 1L;
         private static final GlobalWindow INSTANCE = new GlobalWindow();
 
         private GlobalWindow() {
@@ -119,9 +114,6 @@ public abstract class Window implements Comparable<Window>, Serializable {
      * 会话窗口
      */
     public static class SessionWindow extends Window {
-        @Serial
-        private static final long serialVersionUID = 1L;
-
         public SessionWindow(long start, long end) {
             super(start, end);
         }

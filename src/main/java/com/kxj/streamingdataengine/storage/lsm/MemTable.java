@@ -1,7 +1,5 @@
 package com.kxj.streamingdataengine.storage.lsm;
 
-import lombok.Getter;
-
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
 
@@ -11,29 +9,14 @@ import java.util.concurrent.ConcurrentSkipListMap;
  */
 class MemTable<K extends Comparable<K>, V> {
 
-    private final NavigableMap<K, Entry<V>> data; // 底层存储 - 线程安全的跳表
-
-    /**
-     * 估计内存大小
-     * -- GETTER --
-     *  获取估计内存大小
-
-     */
-    @Getter
-    private volatile long estimatedSize;
-
-    public MemTable() {
-        this.data = new ConcurrentSkipListMap<>();
-        this.estimatedSize = 0;
-    }
+    private final NavigableMap<K, Entry<V>> data = new ConcurrentSkipListMap<>(); // 底层存储 - 线程安全的跳表
 
     /**
      * 写入数据
      */
     public void put(K key, V value, long sequenceNumber) {
         Entry<V> entry = new Entry<>(value, sequenceNumber, false);
-        Entry<V> previous = data.put(key, entry);
-        updateSize(key, value, previous);
+        data.put(key, entry);
     }
 
     /**
@@ -41,8 +24,7 @@ class MemTable<K extends Comparable<K>, V> {
      */
     public void delete(K key, long sequenceNumber) {
         Entry<V> tombstone = new Entry<>(null, sequenceNumber, true);
-        Entry<V> previous = data.put(key, tombstone);
-        updateSize(key, null, previous);
+        data.put(key, tombstone);
     }
 
     /**
@@ -78,36 +60,6 @@ class MemTable<K extends Comparable<K>, V> {
      */
     public boolean isEmpty() {
         return data.isEmpty();
-    }
-
-    /**
-     * 更新内存大小估计
-     */
-    private void updateSize(K key, V value, Entry<V> previous) {
-        // 简单估计：键值对数量 * 平均大小
-        long entrySize = 64; // 基础开销
-        if (key != null) {
-            entrySize += estimateObjectSize(key);
-        }
-        if (value != null) {
-            entrySize += estimateObjectSize(value);
-        }
-
-        if (previous == null) {
-            estimatedSize += entrySize;
-        }
-    }
-
-    /**
-     * 估计对象大小（简化实现）
-     */
-    private long estimateObjectSize(Object obj) {
-        return switch (obj) {
-            case null -> 0;
-            case String s -> s.length() * 2L + 40;
-            case byte[] bytes -> bytes.length + 16;
-            default -> 64;
-        };
     }
 }
 

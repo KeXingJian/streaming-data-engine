@@ -19,11 +19,14 @@ import java.util.concurrent.atomic.LongAdder;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 /**
  * 电商实时大屏场景测试
  * 模拟双11大促等高峰流量场景
  */
 @Slf4j
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class ECommerceScenarioTest {
 
     record OrderEvent(String orderId, String userId, double amount,

@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -14,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Slf4j
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class LSMTreeTest {
 
     private LSMTree<String, String> lsmTree;

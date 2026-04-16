@@ -3,6 +3,7 @@ package com.kxj.streamingdataengine.execution;
 import com.kxj.streamingdataengine.ai.AdaptiveWindowManager;
 import com.kxj.streamingdataengine.ai.AnomalyDetector;
 import com.kxj.streamingdataengine.ai.BackpressureController;
+import com.kxj.streamingdataengine.ai.SeverityLevel;
 import com.kxj.streamingdataengine.core.model.*;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
 import lombok.extern.slf4j.Slf4j;
@@ -197,7 +198,7 @@ public class ExecutionEngine {
                 Thread.sleep(1000);
 
                 BackpressureController.SystemStatus status = backpressureController.getStatus();
-                if (status.pressureLevel() != BackpressureController.PressureLevel.NORMAL) {
+                if (status.pressureLevel() != SeverityLevel.NORMAL) {
                     log.warn("Backpressure detected: {}", status);
                 }
             } catch (InterruptedException e) {
@@ -256,7 +257,6 @@ public class ExecutionEngine {
      * 获取引擎状态
      */
     public EngineStatus getStatus() {
-        new StringBuffer();
         StringBuilder sb = new StringBuilder();
         return new EngineStatus(
                 running,

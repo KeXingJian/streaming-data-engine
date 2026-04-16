@@ -32,7 +32,7 @@ public class AdaptiveWindowManager {
     private volatile Duration currentWindowSize;           // 当前窗口大小
     @Getter
     private volatile Duration maxOutOfOrderness;           // 允许的最大乱序时间
-    private final StatisticsCollector statisticsCollector; // 历史数据统计
+    private final RateStatistics rateStatistics;           // 历史数据统计
     private final Queue<Long> latencySamples;              // 最近的事件延迟样本
     private static final int MAX_SAMPLES = 1000;           // 样本数量限制
     private final AtomicLong lastAdjustmentTime;           // 调整频率控制
@@ -42,7 +42,7 @@ public class AdaptiveWindowManager {
     public AdaptiveWindowManager(Duration initialWindowSize) {
         this.currentWindowSize = initialWindowSize;
         this.maxOutOfOrderness = Duration.ofSeconds(5);
-        this.statisticsCollector = new StatisticsCollector();
+        this.rateStatistics = new RateStatistics();
         this.latencySamples = new ConcurrentLinkedQueue<>();
         this.lastAdjustmentTime = new AtomicLong(0);
         this.pidController = new PIDController(0.3, 0.05, 0.02);
@@ -62,7 +62,7 @@ public class AdaptiveWindowManager {
         }
 
         // 更新统计
-        statisticsCollector.update();
+        rateStatistics.update();
 
         // [kxj: 每10秒触发一次窗口参数自适应调整]
         long now = System.currentTimeMillis();
@@ -89,7 +89,7 @@ public class AdaptiveWindowManager {
         double p99Latency = sortedSamples.get((int) (sortedSamples.size() * 0.99));
 
         // 计算到达率
-        double arrivalRate = statisticsCollector.getArrivalRate();
+        double arrivalRate = rateStatistics.getCurrentRate();
 
         // 使用Little's Law + PID预测最优窗口大小
         long optimalWindowSize = predictOptimalWindowSize(
@@ -158,58 +158,5 @@ public class AdaptiveWindowManager {
      */
     public long getRecommendedWatermarkDelayMs() {
         return maxOutOfOrderness.toMillis();
-    }
-
-    /**
-     * 统计收集器
-     */
-    private static class StatisticsCollector {
-        private final AtomicLong eventCount = new AtomicLong(0);
-        private volatile long lastCountTime = System.currentTimeMillis();
-        private volatile double currentRate = 0;
-
-        void update() {
-            eventCount.incrementAndGet();
-
-            // 每秒更新一次速率
-            long now = System.currentTimeMillis();
-            if (now - lastCountTime >= 1000) {
-                long count = eventCount.getAndSet(0);
-                currentRate = count * 1000.0 / (now - lastCountTime);
-                lastCountTime = now;
-            }
-        }
-
-        double getArrivalRate() {
-            return currentRate;
-        }
-    }
-
-    /**
-     * PID控制器
-     * 用于平滑窗口调整，避免剧烈震荡
-     */
-    private static class PIDController {
-        private final double kp, ki, kd;
-        private double integral;
-        private double lastError;
-
-        PIDController(double kp, double ki, double kd) {
-            this.kp = kp;
-            this.ki = ki;
-            this.kd = kd;
-        }
-
-        double calculate(double error) {
-            integral += error;
-            double derivative = error - lastError;
-            lastError = error;
-            return kp * error + ki * integral + kd * derivative;
-        }
-
-        void reset() {
-            integral = 0;
-            lastError = 0;
-        }
     }
 }

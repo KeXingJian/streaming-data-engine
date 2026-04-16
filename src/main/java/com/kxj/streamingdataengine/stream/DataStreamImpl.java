@@ -39,7 +39,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
     protected final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
 
     // 构造源流
-    public DataStreamImpl(String jobName,DataSource<T> source) {
+    public DataStreamImpl(String jobName, DataSource<T> source) {
         this.jobName = jobName;
 
         this.source = source;
@@ -67,7 +67,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
     @Override
     public <R> DataStream<R> map(Function<T, R> mapper) {
         // [kxj: map转换采用不可变设计，复制转换链并添加新转换，返回新流实例]
-        List<Function<?, ?>> newTransformations = new ArrayList<>(transformations);
+        List<Function<?, ?>> newTransformations = copyTransformations();
         newTransformations.add(mapper);
         log.debug("[kxj: map转换] 当前转换链长度={}, 新增map转换", newTransformations.size());
         return new DataStreamImpl<>(jobName + "_map", source, newTransformations);
@@ -75,7 +75,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
     @Override
     public DataStream<T> filter(Predicate<T> predicate) {
-        List<Function<?, ?>> newTransformations = new ArrayList<>(transformations);
+        List<Function<?, ?>> newTransformations = copyTransformations();
         newTransformations.add((Function<T, T>) v -> predicate.test(v) ? v : null);
         return new DataStreamImpl<>(jobName + "_filter", source, newTransformations);
     }
@@ -191,100 +191,87 @@ public class DataStreamImpl<T> implements DataStream<T> {
                 .build();
     }
 
+    private List<Function<?, ?>> copyTransformations() {
+        return new ArrayList<>(transformations);
+    }
+
+    private static <R> void writeToSinks(List<R> results, List<DataSink<R>> sinks) {
+        for (DataSink<R> sink : sinks) {
+            try (sink) {
+
+                sink.open();
+                for (R r : results) {
+                    sink.write(r);
+                }
+
+            } catch (Exception e) {
+                log.error("Sink close failed", e);
+            }
+        }
+    }
+
     // ========== 内部类实现 ==========
 
     private record KeyedStreamImpl<T, K>(DataStreamImpl<T> parent,
                                          Function<T, K> keyExtractor) implements KeyedStream<T, K> {
 
         @Override
-            public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-                return new DataStreamImpl<R>(parent.jobName + "_keyedAggregate", parent.source, parent.transformations) {
-                    @Override
-                    public List<R> collect() {
-                        List<T> inputs = parent.collect();
-                        Map<K, ACC> accumulators = new HashMap<>();
-                        for (T item : inputs) {
-                            K key = keyExtractor.apply(item);
-                            ACC acc = accumulators.computeIfAbsent(key, k -> aggregateFunction.createAccumulator());
-                            aggregateFunction.add(item, acc);
-                        }
-                        List<R> results = new ArrayList<>();
-                        for (ACC acc : accumulators.values()) {
-                            results.add(aggregateFunction.getResult(acc));
-                        }
-                        return results;
+        public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
+            return new DataStreamImpl<>(parent.jobName + "_keyedAggregate", parent.source, parent.transformations) {
+                @Override
+                public List<R> collect() {
+                    List<T> inputs = parent.collect();
+                    Map<K, ACC> accumulators = new HashMap<>();
+                    for (T item : inputs) {
+                        K key = keyExtractor.apply(item);
+                        ACC acc = accumulators.computeIfAbsent(key, k -> aggregateFunction.createAccumulator());
+                        aggregateFunction.add(item, acc);
                     }
-
-                    @Override
-                    public void execute() {
-                        List<R> results = collect();
-                        for (DataSink<R> sink : sinks) {
-                            try {
-                                sink.open();
-                                for (R r : results) {
-                                    sink.write(r);
-                                }
-                            } catch (Exception e) {
-                                log.error("Sink write failed", e);
-                            } finally {
-                                try {
-                                    sink.close();
-                                } catch (Exception e) {
-                                    log.error("Sink close failed", e);
-                                }
-                            }
-                        }
+                    List<R> results = new ArrayList<>();
+                    for (ACC acc : accumulators.values()) {
+                        results.add(aggregateFunction.getResult(acc));
                     }
-                };
-            }
+                    return results;
+                }
 
-            @Override
-            public DataStream<T> reduce(BinaryOperator<T> reducer) {
-                return new DataStreamImpl<T>(parent.jobName + "_keyedReduce", parent.source, parent.transformations) {
-                    @Override
-                    public List<T> collect() {
-                        List<T> inputs = parent.collect();
-                        Map<K, T> results = new HashMap<>();
-                        for (T item : inputs) {
-                            K key = keyExtractor.apply(item);
-                            results.merge(key, item, reducer);
-                        }
-                        return new ArrayList<>(results.values());
+                @Override
+                public void execute() {
+                    writeToSinks(collect(), sinks);
+                }
+            };
+        }
+
+        @Override
+        public DataStream<T> reduce(BinaryOperator<T> reducer) {
+            return new DataStreamImpl<>(parent.jobName + "_keyedReduce", parent.source, parent.transformations) {
+                @Override
+                public List<T> collect() {
+                    List<T> inputs = parent.collect();
+                    Map<K, T> results = new HashMap<>();
+                    for (T item : inputs) {
+                        K key = keyExtractor.apply(item);
+                        results.merge(key, item, reducer);
                     }
+                    return new ArrayList<>(results.values());
+                }
 
-                    @Override
-                    public void execute() {
-                        List<T> results = collect();
-                        for (DataSink<T> sink : sinks) {
-                            try {
-                                sink.open();
-                                for (T r : results) {
-                                    sink.write(r);
-                                }
-                            } catch (Exception e) {
-                                log.error("Sink write failed", e);
-                            } finally {
-                                try {
-                                    sink.close();
-                                } catch (Exception e) {
-                                    log.error("Sink close failed", e);
-                                }
-                            }
-                        }
-                    }
-                };
-            }
+                @Override
+                public void execute() {
+                    writeToSinks(collect(), sinks);
+                }
+            };
+        }
 
-            @Override
-            public WindowedStream<T> window(Window.Assigner<T> assigner) {
-                return new WindowedStreamImpl<>(parent, assigner);
-            }
+        @Override
+        public WindowedStream<T> window(Window.Assigner<T> assigner) {
+            return new WindowedStreamImpl<>(parent, assigner);
+        }
 
-            // 委托方法
-            @Override
-            public String getId() {
-                return parent.getId();
-            }
+        // 委托方法
+        @Override
+        public String getId() {
+            return parent.getId();
+        }
 
         @Override
         public int getParallelism() {
@@ -325,7 +312,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
         public StreamResult executeAndGet() {
             return parent.executeAndGet();
         }
-        }
+    }
 
     private static class WindowedStreamImpl<T> implements WindowedStream<T> {
         private final DataStreamImpl<T> parent;
@@ -360,7 +347,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
         public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-            return new DataStreamImpl<R>(parent.jobName + "_windowAggregate", parent.source, parent.transformations) {
+            return new DataStreamImpl<>(parent.jobName + "_windowAggregate", parent.source, parent.transformations) {
                 @Override
                 public List<R> collect() {
                     List<T> inputs = parent.collect();
@@ -382,23 +369,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
                 @Override
                 public void execute() {
-                    List<R> results = collect();
-                    for (DataSink<R> sink : sinks) {
-                        try {
-                            sink.open();
-                            for (R r : results) {
-                                sink.write(r);
-                            }
-                        } catch (Exception e) {
-                            log.error("Sink write failed", e);
-                        } finally {
-                            try {
-                                sink.close();
-                            } catch (Exception e) {
-                                log.error("Sink close failed", e);
-                            }
-                        }
-                    }
+                    writeToSinks(collect(), sinks);
                 }
             };
         }
@@ -410,7 +381,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
         public DataStream<T> reduce(java.util.function.BinaryOperator<T> reducer) {
-            return new DataStreamImpl<T>(parent.jobName + "_windowReduce", parent.source, parent.transformations) {
+            return new DataStreamImpl<>(parent.jobName + "_windowReduce", parent.source, parent.transformations) {
                 @Override
                 public List<T> collect() {
                     List<T> inputs = parent.collect();
@@ -427,30 +398,14 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
                 @Override
                 public void execute() {
-                    List<T> results = collect();
-                    for (DataSink<T> sink : sinks) {
-                        try {
-                            sink.open();
-                            for (T r : results) {
-                                sink.write(r);
-                            }
-                        } catch (Exception e) {
-                            log.error("Sink write failed", e);
-                        } finally {
-                            try {
-                                sink.close();
-                            } catch (Exception e) {
-                                log.error("Sink close failed", e);
-                            }
-                        }
-                    }
+                    writeToSinks(collect(), sinks);
                 }
             };
         }
 
         @Override
         public <R> DataStream<R> fold(R initialValue, java.util.function.BiFunction<R, T, R> folder) {
-            return new DataStreamImpl<R>(parent.jobName + "_windowFold", parent.source, parent.transformations) {
+            return new DataStreamImpl<>(parent.jobName + "_windowFold", parent.source, parent.transformations) {
                 @Override
                 public List<R> collect() {
                     List<T> inputs = parent.collect();
@@ -467,30 +422,14 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
                 @Override
                 public void execute() {
-                    List<R> results = collect();
-                    for (DataSink<R> sink : sinks) {
-                        try {
-                            sink.open();
-                            for (R r : results) {
-                                sink.write(r);
-                            }
-                        } catch (Exception e) {
-                            log.error("Sink write failed", e);
-                        } finally {
-                            try {
-                                sink.close();
-                            } catch (Exception e) {
-                                log.error("Sink close failed", e);
-                            }
-                        }
-                    }
+                    writeToSinks(collect(), sinks);
                 }
             };
         }
 
         @Override
         public <R> DataStream<R> apply(Function<Iterable<T>, R> windowFunction) {
-            return new DataStreamImpl<R>(parent.jobName + "_windowApply", parent.source, parent.transformations) {
+            return new DataStreamImpl<>(parent.jobName + "_windowApply", parent.source, parent.transformations) {
                 @Override
                 public List<R> collect() {
                     List<T> inputs = parent.collect();
@@ -511,38 +450,61 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
                 @Override
                 public void execute() {
-                    List<R> results = collect();
-                    for (DataSink<R> sink : sinks) {
-                        try {
-                            sink.open();
-                            for (R r : results) {
-                                sink.write(r);
-                            }
-                        } catch (Exception e) {
-                            log.error("Sink write failed", e);
-                        } finally {
-                            try {
-                                sink.close();
-                            } catch (Exception e) {
-                                log.error("Sink close failed", e);
-                            }
-                        }
-                    }
+                    writeToSinks(collect(), sinks);
                 }
             };
         }
 
         // 委托方法
-        @Override public String getId() { return parent.getId(); }
-        @Override public int getParallelism() { return parent.getParallelism(); }
-        @Override public <R> DataStream<R> map(Function<T, R> mapper) { return parent.map(mapper); }
-        @Override public DataStream<T> filter(Predicate<T> predicate) { return parent.filter(predicate); }
-        @Override public <K> KeyedStream<T, K> keyBy(Function<T, K> keyExtractor) { return parent.keyBy(keyExtractor); }
-        @Override public WindowedStream<T> window(Window.Assigner<T> assigner) { return parent.window(assigner); }
-        @Override public DataStream<T> addSink(DataSink<T> sink) { return parent.addSink(sink); }
-        @Override public List<T> collect() { return parent.collect(); }
-        @Override public void execute() { parent.execute(); }
-        @Override public StreamResult executeAndGet() { return parent.executeAndGet(); }
+        @Override
+        public String getId() {
+            return parent.getId();
+        }
+
+        @Override
+        public int getParallelism() {
+            return parent.getParallelism();
+        }
+
+        @Override
+        public <R> DataStream<R> map(Function<T, R> mapper) {
+            return parent.map(mapper);
+        }
+
+        @Override
+        public DataStream<T> filter(Predicate<T> predicate) {
+            return parent.filter(predicate);
+        }
+
+        @Override
+        public <K> KeyedStream<T, K> keyBy(Function<T, K> keyExtractor) {
+            return parent.keyBy(keyExtractor);
+        }
+
+        @Override
+        public WindowedStream<T> window(Window.Assigner<T> assigner) {
+            return parent.window(assigner);
+        }
+
+        @Override
+        public DataStream<T> addSink(DataSink<T> sink) {
+            return parent.addSink(sink);
+        }
+
+        @Override
+        public List<T> collect() {
+            return parent.collect();
+        }
+
+        @Override
+        public void execute() {
+            parent.execute();
+        }
+
+        @Override
+        public StreamResult executeAndGet() {
+            return parent.executeAndGet();
+        }
 
     }
 }

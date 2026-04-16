@@ -79,8 +79,8 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
             }
 
             // 序列化条目
-            byte[] keyBytes = serializeKey(key);
-            byte[] valueBytes = value.deleted() ? null : serializeValue(value.value());
+            byte[] keyBytes = ObjectSerializer.serialize(key);
+            byte[] valueBytes = value.deleted() ? null : ObjectSerializer.serialize(value.value());
             EntryData entryData = new EntryData(keyBytes, valueBytes, value.sequenceNumber(), value.deleted());
             entries.add(entryData);
 
@@ -213,8 +213,8 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
 
             while (buffer.hasRemaining()) {
                 EntryData entry = EntryData.deserialize(buffer);
-                K key = deserializeKey(entry.keyBytes);
-                V value = entry.isDeleted ? null : deserializeValue(entry.valueBytes);
+                K key = ObjectSerializer.deserialize(entry.keyBytes);
+                V value = entry.isDeleted ? null : ObjectSerializer.deserialize(entry.valueBytes);
                 result.add(Map.entry(key, new Entry<>( value, entry.sequenceNumber, entry.isDeleted)));
             }
         }
@@ -229,11 +229,11 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
 
             while (buffer.hasRemaining()) {
                 EntryData entry = EntryData.deserialize(buffer);
-                K entryKey = deserializeKey(entry.keyBytes);
+                K entryKey = ObjectSerializer.deserialize(entry.keyBytes);
 
                 int cmp = entryKey.compareTo(key);
                 if (cmp == 0) {
-                    V value = entry.isDeleted ? null : deserializeValue(entry.valueBytes);
+                    V value = entry.isDeleted ? null : ObjectSerializer.deserialize(entry.valueBytes);
                     return Optional.of(new Entry<>(value, entry.sequenceNumber, entry.isDeleted));
                 } else if (cmp > 0) {
                     // 已经过了目标key
@@ -249,50 +249,10 @@ class Segment<K extends Comparable<K>, V> implements Comparable<Segment<K, V>> {
                 new BufferedOutputStream(Files.newOutputStream(indexFile)))) {
             dos.writeInt(index.size());
             for (Map.Entry<?, Long> entry : index.entrySet()) {
-                byte[] keyBytes = serializeKey(entry.getKey());
+                byte[] keyBytes = ObjectSerializer.serialize(entry.getKey());
                 dos.writeInt(keyBytes.length);
                 dos.write(keyBytes);
                 dos.writeLong(entry.getValue());
-            }
-        }
-    }
-
-    private static <K> byte[] serializeKey(K key) throws IOException {
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
-             ObjectOutputStream oos = new ObjectOutputStream(baos)) {
-            oos.writeObject(key);
-            return baos.toByteArray();
-        }
-    }
-
-    private static <V> byte[] serializeValue(V value) throws IOException {
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
-             ObjectOutputStream oos = new ObjectOutputStream(baos)) {
-            oos.writeObject(value);
-            return baos.toByteArray();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <K> K deserializeKey(byte[] bytes) throws IOException {
-        try (ObjectInputStream ois = new ObjectInputStream(
-                new ByteArrayInputStream(bytes))) {
-            try {
-                return (K) ois.readObject();
-            } catch (ClassNotFoundException e) {
-                throw new IOException(e);
-            }
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <V> V deserializeValue(byte[] bytes) throws IOException {
-        try (ObjectInputStream ois = new ObjectInputStream(
-                new ByteArrayInputStream(bytes))) {
-            try {
-                return (V) ois.readObject();
-            } catch (ClassNotFoundException e) {
-                throw new IOException(e);
             }
         }
     }

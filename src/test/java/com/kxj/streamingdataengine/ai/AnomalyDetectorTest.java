@@ -9,12 +9,15 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 异常检测器测试
  */
 @Slf4j
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class AnomalyDetectorTest {
 
     @Test
@@ -83,7 +86,7 @@ public class AnomalyDetectorTest {
 
         // 应该有高级别告警
         boolean hasHighLevelAlert = alerts.stream()
-                .anyMatch(a -> a.getLevel().ordinal() >= AnomalyDetector.AnomalyLevel.MEDIUM.ordinal());
+                .anyMatch(a -> a.getLevel().ordinal() >= SeverityLevel.MEDIUM.ordinal());
         assertTrue(hasHighLevelAlert, "应该有中高级别告警");
     }
 

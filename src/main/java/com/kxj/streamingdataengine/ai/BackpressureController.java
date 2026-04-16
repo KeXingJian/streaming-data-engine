@@ -37,11 +37,11 @@ public class BackpressureController {
     private static final long LATENCY_HIGH_THRESHOLD = 1000;
 
     @Getter
-    private final AtomicReference<PressureLevel> currentLevel;  // 当前压力等级
+    private final AtomicReference<SeverityLevel> currentLevel;  // 当前压力等级
     private final AtomicInteger currentRateLimit;               // 当前限流速率（记录/秒）
     private final ConcurrentLinkedQueue<Sample> samples;        // 采样队列
     private final AtomicInteger monitoredQueueSize;             // 队列大小监控
-    private final Statistics statistics;                        // 统计信息
+    private final LatencyStatistics latencyStatistics;          // 延迟统计信息
     private final PIDController pidController;                  // 自适应PID控制器
     private final long targetLatencyMs;                         // 目标延迟
 
@@ -51,11 +51,11 @@ public class BackpressureController {
 
     public BackpressureController(long targetLatencyMs) {
         this.targetLatencyMs = targetLatencyMs;
-        this.currentLevel = new AtomicReference<>(PressureLevel.NORMAL);
+        this.currentLevel = new AtomicReference<>(SeverityLevel.NORMAL);
         this.currentRateLimit = new AtomicInteger(Integer.MAX_VALUE);
         this.samples = new ConcurrentLinkedQueue<>();
         this.monitoredQueueSize = new AtomicInteger(0);
-        this.statistics = new Statistics();
+        this.latencyStatistics = new LatencyStatistics();
         this.pidController = new PIDController(0.5, 0.1, 0.05);
     }
 
@@ -75,7 +75,7 @@ public class BackpressureController {
         cleanupOldSamples();
 
         // 更新统计
-        statistics.update(processingLatencyMs, monitoredQueueSize.get());
+        latencyStatistics.update(processingLatencyMs);
 
         // [kxj: 评估系统压力并动态调整限流，确保系统稳定运行]
         evaluateAndAdjust();
@@ -106,19 +106,19 @@ public class BackpressureController {
 
         // 简化的令牌桶检查
         long now = System.currentTimeMillis();
-        return now % 1000 < (1000 * statistics.currentRate / Math.max(limit, 1));
+        return now % 1000 < (1000 * latencyStatistics.currentRate / Math.max(limit, 1));
     }
 
     /**
      * 评估系统状态并调整背压
      */
     private void evaluateAndAdjust() {
-        long avgLatency = statistics.getAvgLatency();
+        long avgLatency = latencyStatistics.getAvgLatency();
         int queueSize = monitoredQueueSize.get();
 
         // 确定当前压力等级
-        PressureLevel newLevel = determinePressureLevel(avgLatency, queueSize);
-        PressureLevel oldLevel = currentLevel.getAndSet(newLevel);
+        SeverityLevel newLevel = determinePressureLevel(avgLatency, queueSize);
+        SeverityLevel oldLevel = currentLevel.getAndSet(newLevel);
 
         if (newLevel != oldLevel) {
             log.info("Pressure level changed: {} -> {}, latency={}, queue={}",
@@ -133,7 +133,7 @@ public class BackpressureController {
     /**
      * 确定压力等级
      */
-    private PressureLevel determinePressureLevel(long avgLatency, int queueSize) {
+    private SeverityLevel determinePressureLevel(long avgLatency, int queueSize) {
         int pressureScore = 0;
 
         // 队列长度评分
@@ -156,19 +156,19 @@ public class BackpressureController {
 
         // [kxj: 压力评分转换 - 0-1分NORMAL, 1-2分MEDIUM, 3-4分HIGH, 5+分CRITICAL]
         if (pressureScore >= 5) {
-            return PressureLevel.CRITICAL;
+            return SeverityLevel.CRITICAL;
         } else if (pressureScore >= 3) {
-            return PressureLevel.HIGH;
+            return SeverityLevel.HIGH;
         } else if (pressureScore >= 1) {
-            return PressureLevel.MEDIUM;
+            return SeverityLevel.MEDIUM;
         }
-        return PressureLevel.NORMAL;
+        return SeverityLevel.NORMAL;
     }
 
     /**
      * 应用压力控制
      */
-    private void applyPressureControl(PressureLevel level, PressureLevel oldLevel) {
+    private void applyPressureControl(SeverityLevel level, SeverityLevel oldLevel) {
         // [kxj: 根据压力等级设置对应限流阈值，NORMAL时重置统计恢复最佳状态]
         int newLimit;
 
@@ -176,7 +176,7 @@ public class BackpressureController {
             case NORMAL:
                 newLimit = Integer.MAX_VALUE; // 不限流
                 // 重置统计数据，避免旧数据影响
-                statistics.reset();
+                latencyStatistics.reset();
                 break;
             case MEDIUM:
                 newLimit = 50000; // 5万/秒
@@ -202,7 +202,7 @@ public class BackpressureController {
      * 只做保守调整，避免过度限流
      */
     private void fineTuneControl(long currentLatency) {
-        if (currentLevel.get() == PressureLevel.NORMAL) {
+        if (currentLevel.get() == SeverityLevel.NORMAL) {
             return;
         }
 
@@ -255,39 +255,31 @@ public class BackpressureController {
         return new SystemStatus(
                 currentLevel.get(),
                 currentRateLimit.get(),
-                statistics.getAvgLatency(),
+                latencyStatistics.getAvgLatency(),
                 monitoredQueueSize.get(),
-                statistics.currentRate
+                latencyStatistics.currentRate
         );
     }
 
-    // ============== 内部类和枚举 ==============
+    // ============== 内部类和记录 ==============
 
-    public enum PressureLevel {
-        NORMAL,
-        MEDIUM,
-        HIGH,
-        CRITICAL
-    }
-
-
-    public record SystemStatus(PressureLevel pressureLevel, int rateLimit, long avgLatencyMs, int queueSize,
+    public record SystemStatus(SeverityLevel pressureLevel, int rateLimit, long avgLatencyMs, int queueSize,
                                double currentRate) {
     }
 
     private record Sample(long timestamp, long latency, int queueSize) {}
 
     /**
-     * 简单统计
+     * 延迟统计
      */
-    private static class Statistics {
+    private static class LatencyStatistics {
         private final AtomicLong totalLatency = new AtomicLong(0);
         private final AtomicLong sampleCount = new AtomicLong(0);
         private final AtomicLong lastRateCheck = new AtomicLong(0);
         private final AtomicLong lastRateCount = new AtomicLong(0);
         volatile double currentRate = 0;
 
-        void update(long latency, int queueSize) {
+        void update(long latency) {
             totalLatency.addAndGet(latency);
             long count = sampleCount.incrementAndGet();
 
@@ -314,34 +306,6 @@ public class BackpressureController {
             lastRateCheck.set(0);
             lastRateCount.set(0);
             currentRate = 0;
-        }
-    }
-
-    /**
-     * PID控制器
-     */
-    private static class PIDController {
-        private final double kp, ki, kd;
-        private double integral;
-        private double lastError;
-
-        PIDController(double kp, double ki, double kd) {
-            this.kp = kp;
-            this.ki = ki;
-            this.kd = kd;
-        }
-
-        double calculate(double error) {
-            integral += error;
-            double derivative = error - lastError;
-            lastError = error;
-
-            return kp * error + ki * integral + kd * derivative;
-        }
-
-        void reset() {
-            integral = 0;
-            lastError = 0;
         }
     }
 }

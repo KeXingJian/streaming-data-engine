@@ -1,6 +1,7 @@
 package com.kxj.streamingdataengine.scenario;
 
 import com.kxj.streamingdataengine.ai.AnomalyDetector;
+import com.kxj.streamingdataengine.ai.SeverityLevel;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.execution.ExecutionEngine;
 import lombok.extern.slf4j.Slf4j;
@@ -16,11 +17,14 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 /**
  * 金融风控场景测试
  * 实时交易监控、欺诈检测、风险预警
  */
 @Slf4j
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class FinancialScenarioTest {
 
     record Transaction(String transactionId, String userId, String cardId,
@@ -181,7 +185,7 @@ public class FinancialScenarioTest {
         log.info("检测到 {} 次流量异常", alerts.size());
 
         boolean hasCriticalAlert = alerts.stream()
-                .anyMatch(a -> a.getLevel() == AnomalyDetector.AnomalyLevel.CRITICAL);
+                .anyMatch(a -> a.getLevel() == SeverityLevel.CRITICAL);
 
         assertTrue(hasCriticalAlert, "应该有严重级别告警");
     }

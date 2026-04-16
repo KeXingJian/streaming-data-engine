@@ -2,6 +2,7 @@ package com.kxj.streamingdataengine.scenario;
 
 import com.kxj.streamingdataengine.aggregation.MergeTreeAggregator;
 import com.kxj.streamingdataengine.ai.AnomalyDetector;
+import com.kxj.streamingdataengine.ai.SeverityLevel;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.execution.ExecutionEngine;
 import com.kxj.streamingdataengine.sink.CollectSink;
@@ -16,6 +17,8 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -23,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 模拟大量传感器实时数据采集和分析
  */
 @Slf4j
+@ExtendWith(com.kxj.streamingdataengine.extension.TestReportExtension.class)
 public class IoTScenarioTest {
 
     /**
@@ -107,7 +111,7 @@ public class IoTScenarioTest {
         assertFalse(alerts.isEmpty(), "应该检测到温度异常");
 
         alerts.stream()
-                .filter(a -> a.getLevel().ordinal() >= AnomalyDetector.AnomalyLevel.MEDIUM.ordinal())
+                .filter(a -> a.getLevel().ordinal() >= SeverityLevel.MEDIUM.ordinal())
                 .forEach(a -> log.info("重要告警: level={}, value={}", a.getLevel(), String.format("%.2f", a.getCurrentValue())));
     }
 
