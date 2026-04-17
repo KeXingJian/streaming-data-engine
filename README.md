@@ -1,12 +1,38 @@
 # 高性能流式数据处理引擎
 
-一个轻量级、高性能的流式数据处理引擎，借鉴 Kafka、Flink 和 ClickHouse 的核心设计思想。
+一个基于 Java 21 的轻量级高性能流式数据处理引擎，借鉴 Kafka（日志结构化存储）、Flink（事件时间 / 窗口 / Watermark）和 ClickHouse（MergeTree 增量聚合）的核心设计思想。
+
+## 技术栈
+
+- **Java 21** — 虚拟线程、Records、模式匹配
+- **Maven** — 构建工具（`./mvnw`）
+- **Spring Boot 3.5+** — Web 启动器和 REST 演示接口
+- **Lombok** — `@Slf4j`、`@RequiredArgsConstructor`、`@Getter`
+
+## 构建与测试
+
+```bash
+# 编译
+./mvnw compile
+
+# 运行全部测试
+./mvnw test
+
+# 运行单个测试类
+./mvnw test -Dtest=BackpressureControllerTest
+
+# 运行单个测试方法
+./mvnw test -Dtest=IoTScenarioTest#testSensorDataAggregation
+
+# 启动 Spring Boot 演示服务
+./mvnw spring-boot:run
+```
 
 ## 核心特性
 
 ### 1. 存储层 - LSM-Tree
 借鉴 Kafka 的 Log-Structured Merge-Tree 设计：
-- **MemTable**: 内存有序结构（ConcurrentSkipListMap）
+- **MemTable**: 内存有序结构（`ConcurrentSkipListMap`）
 - **Immutable MemTable**: 等待刷盘的只读表
 - **Segment**: 磁盘不可变数据段，支持稀疏索引
 - **Compaction**: 后台合并压缩（Size-Tiered / Leveled）
@@ -16,7 +42,7 @@
 借鉴 Flink 的 Watermark 机制：
 - **Event Time**: 基于业务时间戳处理
 - **Watermark**: 推进事件时间，处理乱序数据
-- **Window**: 支持滚动、滑动、会话、全局窗口
+- **Window**: 支持滚动、滑动、会话、全局、计数窗口
 - **Trigger**: 灵活的窗口触发策略
 - **Allowed Lateness**: 允许迟到数据处理
 
@@ -27,24 +53,25 @@
 - **增量聚合**: 预聚合减少计算量
 - **后台合并**: 自动合并优化存储
 
-### 4. AI 智能控制
+### 4. AI 智能控制层
 
-#### 自适应窗口管理
-- 基于数据到达率学习最优窗口大小
-- 使用 EWMA 预测流量趋势
-- 动态调整乱序容忍度
+#### 自适应窗口管理 (`AdaptiveWindowManager`)
+- 基于 **Little's Law (L = λW) + PID 控制器** 预测并平滑调整最优窗口大小
+- 使用 EWMA 实时估计数据到达率，避免固定窗口盲区
+- 动态调整乱序容忍度 (`maxOutOfOrderness`)
 
-#### 异常流量检测
+#### 异常流量检测 (`AnomalyDetector`)
 - 3-sigma 统计异常检测
 - 变化率监控
 - 周期性模式识别
-- 多级告警机制
+- 多级告警机制（NORMAL / MEDIUM / HIGH / CRITICAL）
 
-#### 动态背压控制
-- 队列长度监控
-- 处理延迟监控
-- PID 控制器自动调节
-- 多级限流策略
+#### 动态背压控制 (`BackpressureController`)
+- **Little's Law 预测式限流**: `optimalRate = arrivalRate × targetLatency / avgLatency`
+- **EWMA 到达率估计**: 逐样本即时更新，无需等待固定窗口结束
+- **PID 控制器平滑修正**: 比例-积分-微分反馈避免剧烈震荡，带积分限幅与 sign-flip 重置防止 windup
+- **自然背压 (Natural Backpressure)**: 启用背压时，通过 `ArrayBlockingQueue.put()` 让生产者线程在队列满时自动阻塞，配合 Java 21 虚拟线程消费者，消除主动轮询 (`Thread.sleep`) 和伪令牌桶开销
+- **多级限流策略**: 根据延迟误差映射为 NORMAL / MEDIUM / HIGH / CRITICAL 等级
 
 ## 快速开始
 
@@ -73,19 +100,18 @@ builder.fromCollection(sensorData)
 
 ### 带背压的执行
 
-```java
-StreamConfig config = new StreamConfig();
-config.setEnableBackpressure(true);
-config.setEnableAdaptiveWindow(true);
+背压与自适应窗口默认启用（`StreamConfig` 默认 `enableBackpressure = true`，`enableAdaptiveWindow = true`）。
+创建 `DataStreamImpl` 后可直接执行：
 
+```java
 StreamBuilder builder = new StreamBuilder("backpressure-job");
-builder.withBackpressure(true)
-    .withAdaptiveWindow(true)
-    .fromCollection(largeDataSet)
+builder.fromCollection(largeDataSet)
     .map(this::process)
     .addSink(sink)
     .execute();
 ```
+
+当背压启用时，引擎内部使用 **生产者-消费者 Pipeline**（`BlockingQueue` + 虚拟线程），队列满时主线程自然阻塞，实现零轮询背压。
 
 ## 架构图
 
@@ -101,6 +127,8 @@ builder.withBackpressure(true)
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
 │  │  Execution  │    │   Window    │    │  Watermark  │         │
 │  │   Engine    │    │   Manager   │    │   Manager   │         │
+│  │ (Virtual    │    │  (Adaptive) │    │(Multi-Part) │         │
+│  │  Threads)   │    │             │    │             │         │
 │  └─────────────┘    └─────────────┘    └─────────────┘         │
 ├─────────────────────────────────────────────────────────────────┤
 │                         存储层 (LSM-Tree)                        │
@@ -113,18 +141,38 @@ builder.withBackpressure(true)
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
 │  │   Adaptive  │    │   Anomaly   │    │ Backpressure│         │
 │  │    Window   │    │  Detector   │    │ Controller  │         │
+│  │ (Little's   │    │  (3-sigma)  │    │(EWMA + PID +│         │
+│  │   Law+PID)  │    │             │    │ BlockingQueue)│       │
 │  └─────────────┘    └─────────────┘    └─────────────┘         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## 关键设计细节
+
+### 自然背压 Pipeline
+
+`ExecutionEngine` 在启用背压时创建内部 `Pipeline`：
+
+- `ArrayBlockingQueue` 作为有界缓冲区
+- `parallelism` 个虚拟线程消费者从队列 `take()` 并执行算子链
+- 生产者通过 `queue.put(record)` 提交数据，队列满时自动阻塞
+- 使用 **毒丸 (Poison Pill)** 信号优雅关闭消费者线程
+
+### PID 抗 Windup
+
+背压控制器中的 PID 配备两项保护机制：
+1. **积分限幅 (Integral Clamp)**: 积分项被限制在 `[-30, 30]`，避免高压期累积过深
+2. **符号翻转重置 (Sign-Flip Reset)**: 当延迟误差从负（过载）跨过 0 变为正（欠载）时，自动重置 PID 积分器，确保系统恢复后限流能够快速放宽
 
 ## 性能指标
 
 | 指标 | 数值 |
 |------|------|
-| 吞吐量 | 100K+ 记录/秒 |
-| 延迟 | 亚毫秒级（P99 < 10ms）|
-| 内存效率 | 压缩比 10:1 |
-| 乱序容忍 | 可配置，默认5秒 |
+| LSM-Tree 读取吞吐量 | 100K+ ops/秒 |
+| 背压控制器并发采样 | 100K+ ops/秒 |
+| 端到端平均延迟 | < 20ms |
+| 每条记录内存占用 | < 1KB |
+| 乱序容忍 | 可配置，默认 5 秒 |
 
 ## 设计思想
 
@@ -155,6 +203,14 @@ builder.withBackpressure(true)
 3. **AI 自适应**: 根据流量特征自动调整窗口大小
 4. **迟到数据处理**: Watermark + Allowed Lateness 机制
 
+### PID 积分 Windup 导致背压无法恢复
+
+**问题**: 高压力阶段 PID 积分项持续累积负值，即使延迟已经恢复，积分器仍拖拽 `predicted` 为负数，限流卡在 `MIN_RATE_LIMIT` 无法放宽。
+
+**解决方案**:
+1. 在 `PIDController` 中增加 `integralClamp`，将积分限制在合理范围
+2. 在 `BackpressureController` 中监测延迟误差符号翻转 (`lastLatencyError <= 0 && latencyError > 0`)，触发 `pidController.reset()` 清零历史累积
+
 ## 扩展计划
 
 - [ ] 分布式执行（支持多节点）
@@ -162,5 +218,3 @@ builder.withBackpressure(true)
 - [ ] 更多数据源连接器（Kafka、Pulsar 等）
 - [ ] 机器学习集成（实时模型推理）
 - [ ] Web UI 监控面板
-
-## 任务已完成,KXJ!

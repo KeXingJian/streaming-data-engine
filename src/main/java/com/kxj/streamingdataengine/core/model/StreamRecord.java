@@ -23,6 +23,13 @@ import java.util.Map;
 public record StreamRecord<T>(String key, T value, long eventTime, long processingTime, long ingestionTime,
                               Map<String, Object> attributes, int partition,
                               long sequenceNumber) implements Serializable, Comparable<StreamRecord<T>> {
+    
+    /**
+     * 特殊记录标记接口
+     * 用于 CheckpointBarrier 等特殊控制消息
+     */
+    public interface SpecialRecord {
+    }
 
     @Serial
     private static final long serialVersionUID = 1L;

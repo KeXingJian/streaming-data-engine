@@ -10,7 +10,13 @@ import com.kxj.streamingdataengine.core.model.KeyedStream;
 import com.kxj.streamingdataengine.core.model.WindowedStream;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
 import com.kxj.streamingdataengine.execution.ExecutionEngine;
+import com.kxj.streamingdataengine.operator.KeyedAggregateOperator;
+import com.kxj.streamingdataengine.operator.KeyedReduceOperator;
 import com.kxj.streamingdataengine.operator.TransformOperator;
+import com.kxj.streamingdataengine.operator.WindowAggregateOperator;
+import com.kxj.streamingdataengine.operator.WindowApplyOperator;
+import com.kxj.streamingdataengine.operator.WindowFoldOperator;
+import com.kxj.streamingdataengine.operator.WindowReduceOperator;
 import com.kxj.streamingdataengine.window.Window;
 import com.kxj.streamingdataengine.window.trigger.Trigger;
 import lombok.Getter;
@@ -30,28 +36,60 @@ import java.util.function.Predicate;
 public class DataStreamImpl<T> implements DataStream<T> {
 
     private final String jobName;
-    private final StreamConfig config = new StreamConfig();
+    private StreamConfig config = new StreamConfig();
     private final DataSource<T> source;
 
     // 转换链：存储从source到当前类型的所有转换函数
     private final List<Function<?, ?>> transformations;
+
+    // 自定义算子链：流式有状态算子（keyed/window）在execute时追加到TransformOperator之后
+    private final List<StreamOperator<?>> customOperators;
 
     protected final List<DataSink<T>> sinks = new CopyOnWriteArrayList<>();
 
     // 构造源流
     public DataStreamImpl(String jobName, DataSource<T> source) {
         this.jobName = jobName;
-
         this.source = source;
         this.transformations = new ArrayList<>();
+        this.customOperators = new ArrayList<>();
+    }
+
+    // 构造带配置的源流（测试用）
+    public DataStreamImpl(String jobName, DataSource<T> source, StreamConfig config) {
+        this.jobName = jobName;
+        this.source = source;
+        this.config = config;
+        this.transformations = new ArrayList<>();
+        this.customOperators = new ArrayList<>();
     }
 
     // 构造转换流
     private DataStreamImpl(String jobName, DataSource<?> source,
                            List<Function<?, ?>> transformations) {
+        this(jobName, source, transformations, new ArrayList<>());
+    }
+
+    // 构造带自定义算子的流
+    private DataStreamImpl(String jobName, DataSource<?> source,
+                           List<Function<?, ?>> transformations,
+                           List<StreamOperator<?>> customOperators) {
         this.jobName = jobName;
         this.source = (DataSource<T>) source;
         this.transformations = new ArrayList<>(transformations);
+        this.customOperators = new ArrayList<>(customOperators);
+    }
+
+    // 构造带自定义算子和配置的流（内部复制用）
+    private DataStreamImpl(String jobName, DataSource<?> source,
+                           List<Function<?, ?>> transformations,
+                           List<StreamOperator<?>> customOperators,
+                           StreamConfig config) {
+        this.jobName = jobName;
+        this.source = (DataSource<T>) source;
+        this.transformations = new ArrayList<>(transformations);
+        this.customOperators = new ArrayList<>(customOperators);
+        this.config = config;
     }
 
     @Override
@@ -64,20 +102,27 @@ public class DataStreamImpl<T> implements DataStream<T> {
         return config.getParallelism();
     }
 
+    /**
+     * 返回携带新配置的流实例（不可变复制）
+     */
+    public DataStreamImpl<T> withConfig(StreamConfig newConfig) {
+        return new DataStreamImpl<>(jobName, source, transformations, customOperators, newConfig);
+    }
+
     @Override
     public <R> DataStream<R> map(Function<T, R> mapper) {
         // [kxj: map转换采用不可变设计，复制转换链并添加新转换，返回新流实例]
         List<Function<?, ?>> newTransformations = copyTransformations();
         newTransformations.add(mapper);
         log.debug("[kxj: map转换] 当前转换链长度={}, 新增map转换", newTransformations.size());
-        return new DataStreamImpl<>(jobName + "_map", source, newTransformations);
+        return new DataStreamImpl<>(jobName + "_map", source, newTransformations, customOperators, config);
     }
 
     @Override
     public DataStream<T> filter(Predicate<T> predicate) {
         List<Function<?, ?>> newTransformations = copyTransformations();
         newTransformations.add((Function<T, T>) v -> predicate.test(v) ? v : null);
-        return new DataStreamImpl<>(jobName + "_filter", source, newTransformations);
+        return new DataStreamImpl<>(jobName + "_filter", source, newTransformations, customOperators, config);
     }
 
     @Override
@@ -136,8 +181,15 @@ public class DataStreamImpl<T> implements DataStream<T> {
                 Function<Object, Object> func = (Function<Object, Object>) f;
                 operators.add(new TransformOperator<>(func));
             }
+            // [kxj: 追加自定义流式算子到Pipeline]
+            for (StreamOperator<?> custom : customOperators) {
+                @SuppressWarnings("unchecked")
+                StreamOperator<T> op = (StreamOperator<T>) custom;
+                operators.add(op);
+            }
 
             // [kxj: 多sink聚合为复合sink，适配engine单sink接口]
+            @SuppressWarnings("unchecked")
             DataSink<T> combinedSink = sinks.isEmpty() ? null : value -> {
                 for (DataSink<T> sink : sinks) {
                     try {
@@ -147,6 +199,9 @@ public class DataStreamImpl<T> implements DataStream<T> {
                     }
                 }
             };
+
+            // [kxj: 注册活跃算子链与sink到引擎，供Watermark全局驱动]
+            engine.setPipeline(operators, combinedSink);
 
             if (config.isEnableBackpressure()) {
                 // [kxj: 启用管道级自然背压 - BlockingQueue + 虚拟线程消费者]
@@ -230,54 +285,29 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
         public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-            return new DataStreamImpl<>(parent.jobName + "_keyedAggregate", parent.source, parent.transformations) {
-                @Override
-                public List<R> collect() {
-                    List<T> inputs = parent.collect();
-                    Map<K, ACC> accumulators = new HashMap<>();
-                    for (T item : inputs) {
-                        K key = keyExtractor.apply(item);
-                        ACC acc = accumulators.computeIfAbsent(key, k -> aggregateFunction.createAccumulator());
-                        aggregateFunction.add(item, acc);
-                    }
-                    List<R> results = new ArrayList<>();
-                    for (ACC acc : accumulators.values()) {
-                        results.add(aggregateFunction.getResult(acc));
-                    }
-                    return results;
-                }
-
-                @Override
-                public void execute() {
-                    writeToSinks(collect(), sinks);
-                }
-            };
+            List<StreamOperator<?>> newCustomOperators = new ArrayList<>(parent.customOperators);
+            long ttlMs = parent.config.getStateTtl().toMillis();
+            @SuppressWarnings("unchecked")
+            StreamOperator<?> op = new KeyedAggregateOperator<T, K, ACC, R>(keyExtractor, aggregateFunction, ttlMs);
+            newCustomOperators.add(op);
+            return new DataStreamImpl<>(parent.jobName + "_keyedAggregate", parent.source,
+                    parent.transformations, newCustomOperators, parent.config);
         }
 
         @Override
         public DataStream<T> reduce(BinaryOperator<T> reducer) {
-            return new DataStreamImpl<>(parent.jobName + "_keyedReduce", parent.source, parent.transformations) {
-                @Override
-                public List<T> collect() {
-                    List<T> inputs = parent.collect();
-                    Map<K, T> results = new HashMap<>();
-                    for (T item : inputs) {
-                        K key = keyExtractor.apply(item);
-                        results.merge(key, item, reducer);
-                    }
-                    return new ArrayList<>(results.values());
-                }
-
-                @Override
-                public void execute() {
-                    writeToSinks(collect(), sinks);
-                }
-            };
+            List<StreamOperator<?>> newCustomOperators = new ArrayList<>(parent.customOperators);
+            long ttlMs = parent.config.getStateTtl().toMillis();
+            @SuppressWarnings("unchecked")
+            StreamOperator<?> op = new KeyedReduceOperator<T, K>(keyExtractor, reducer, ttlMs);
+            newCustomOperators.add(op);
+            return new DataStreamImpl<>(parent.jobName + "_keyedReduce", parent.source,
+                    parent.transformations, newCustomOperators, parent.config);
         }
 
         @Override
         public WindowedStream<T> window(Window.Assigner<T> assigner) {
-            return new WindowedStreamImpl<>(parent, assigner);
+            return new WindowedStreamImpl<>(parent, assigner, keyExtractor);
         }
 
         // 委托方法
@@ -335,10 +365,16 @@ public class DataStreamImpl<T> implements DataStream<T> {
         private Trigger<T> trigger;
         @Getter
         private long allowedLateness = 0;
+        private final Function<T, ?> keyExtractor;
 
         WindowedStreamImpl(DataStreamImpl<T> parent, Window.Assigner<T> assigner) {
+            this(parent, assigner, null);
+        }
+
+        WindowedStreamImpl(DataStreamImpl<T> parent, Window.Assigner<T> assigner, Function<T, ?> keyExtractor) {
             this.parent = parent;
             this.assigner = assigner;
+            this.keyExtractor = keyExtractor;
         }
 
         @Override
@@ -360,31 +396,13 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
         public <ACC, R> DataStream<R> aggregate(AggregateFunction<T, ACC, R> aggregateFunction) {
-            return new DataStreamImpl<>(parent.jobName + "_windowAggregate", parent.source, parent.transformations) {
-                @Override
-                public List<R> collect() {
-                    List<T> inputs = parent.collect();
-                    Map<Window, ACC> accumulators = new HashMap<>();
-                    long timestamp = System.currentTimeMillis();
-                    for (T item : inputs) {
-                        List<Window> windows = assigner.assignWindows(item, timestamp);
-                        for (Window window : windows) {
-                            ACC acc = accumulators.computeIfAbsent(window, w -> aggregateFunction.createAccumulator());
-                            aggregateFunction.add(item, acc);
-                        }
-                    }
-                    List<R> results = new ArrayList<>();
-                    for (ACC acc : accumulators.values()) {
-                        results.add(aggregateFunction.getResult(acc));
-                    }
-                    return results;
-                }
-
-                @Override
-                public void execute() {
-                    writeToSinks(collect(), sinks);
-                }
-            };
+            List<StreamOperator<?>> newCustomOperators = new ArrayList<>(parent.customOperators);
+            @SuppressWarnings("unchecked")
+            StreamOperator<?> op = new WindowAggregateOperator<T, ACC, R>(
+                    assigner, trigger, aggregateFunction, keyExtractor, allowedLateness);
+            newCustomOperators.add(op);
+            return new DataStreamImpl<>(parent.jobName + "_windowAggregate", parent.source,
+                    parent.transformations, newCustomOperators, parent.config);
         }
 
         @Override
@@ -394,78 +412,35 @@ public class DataStreamImpl<T> implements DataStream<T> {
 
         @Override
         public DataStream<T> reduce(java.util.function.BinaryOperator<T> reducer) {
-            return new DataStreamImpl<>(parent.jobName + "_windowReduce", parent.source, parent.transformations) {
-                @Override
-                public List<T> collect() {
-                    List<T> inputs = parent.collect();
-                    Map<Window, T> results = new HashMap<>();
-                    long timestamp = System.currentTimeMillis();
-                    for (T item : inputs) {
-                        List<Window> windows = assigner.assignWindows(item, timestamp);
-                        for (Window window : windows) {
-                            results.merge(window, item, reducer);
-                        }
-                    }
-                    return new ArrayList<>(results.values());
-                }
-
-                @Override
-                public void execute() {
-                    writeToSinks(collect(), sinks);
-                }
-            };
+            List<StreamOperator<?>> newCustomOperators = new ArrayList<>(parent.customOperators);
+            @SuppressWarnings("unchecked")
+            StreamOperator<?> op = new WindowReduceOperator<T>(
+                    assigner, trigger, reducer, keyExtractor, allowedLateness);
+            newCustomOperators.add(op);
+            return new DataStreamImpl<>(parent.jobName + "_windowReduce", parent.source,
+                    parent.transformations, newCustomOperators, parent.config);
         }
 
         @Override
         public <R> DataStream<R> fold(R initialValue, java.util.function.BiFunction<R, T, R> folder) {
-            return new DataStreamImpl<>(parent.jobName + "_windowFold", parent.source, parent.transformations) {
-                @Override
-                public List<R> collect() {
-                    List<T> inputs = parent.collect();
-                    Map<Window, R> accMap = new HashMap<>();
-                    long timestamp = System.currentTimeMillis();
-                    for (T item : inputs) {
-                        List<Window> windows = assigner.assignWindows(item, timestamp);
-                        for (Window window : windows) {
-                            accMap.put(window, folder.apply(accMap.getOrDefault(window, initialValue), item));
-                        }
-                    }
-                    return new ArrayList<>(accMap.values());
-                }
-
-                @Override
-                public void execute() {
-                    writeToSinks(collect(), sinks);
-                }
-            };
+            List<StreamOperator<?>> newCustomOperators = new ArrayList<>(parent.customOperators);
+            @SuppressWarnings("unchecked")
+            StreamOperator<?> op = new WindowFoldOperator<T, R>(
+                    assigner, trigger, initialValue, folder, keyExtractor, allowedLateness);
+            newCustomOperators.add(op);
+            return new DataStreamImpl<>(parent.jobName + "_windowFold", parent.source,
+                    parent.transformations, newCustomOperators, parent.config);
         }
 
         @Override
         public <R> DataStream<R> apply(Function<Iterable<T>, R> windowFunction) {
-            return new DataStreamImpl<>(parent.jobName + "_windowApply", parent.source, parent.transformations) {
-                @Override
-                public List<R> collect() {
-                    List<T> inputs = parent.collect();
-                    Map<Window, List<T>> groups = new HashMap<>();
-                    long timestamp = System.currentTimeMillis();
-                    for (T item : inputs) {
-                        List<Window> windows = assigner.assignWindows(item, timestamp);
-                        for (Window window : windows) {
-                            groups.computeIfAbsent(window, w -> new ArrayList<>()).add(item);
-                        }
-                    }
-                    List<R> results = new ArrayList<>();
-                    for (List<T> group : groups.values()) {
-                        results.add(windowFunction.apply(group));
-                    }
-                    return results;
-                }
-
-                @Override
-                public void execute() {
-                    writeToSinks(collect(), sinks);
-                }
-            };
+            List<StreamOperator<?>> newCustomOperators = new ArrayList<>(parent.customOperators);
+            @SuppressWarnings("unchecked")
+            StreamOperator<?> op = new WindowApplyOperator<T, R>(
+                    assigner, trigger, windowFunction, keyExtractor, allowedLateness);
+            newCustomOperators.add(op);
+            return new DataStreamImpl<>(parent.jobName + "_windowApply", parent.source,
+                    parent.transformations, newCustomOperators, parent.config);
         }
 
         // 委托方法

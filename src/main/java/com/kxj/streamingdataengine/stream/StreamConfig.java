@@ -1,5 +1,6 @@
 package com.kxj.streamingdataengine.stream;
 
+import com.kxj.streamingdataengine.state.StateBackendFactory;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -23,5 +24,11 @@ public class StreamConfig {
     private Duration checkpointInterval = Duration.ofMinutes(1);                  // 检查点间隔
     private Duration maxOutOfOrderness = Duration.ofSeconds(5);                   // 最大乱序时间
     private Duration allowedLateness = Duration.ZERO;                             // 允许迟到时间
+    private Duration stateTtl = Duration.ZERO;                                    // Keyed状态TTL，0表示不启用
     private boolean autoWatermark = true;                                         // 自动水印策略
+    
+    // 状态后端配置
+    private StateBackendFactory.StateBackendType stateBackendType = StateBackendFactory.StateBackendType.MEMORY;  // 状态后端类型
+    private String stateBackendPath = System.getProperty("java.io.tmpdir") + "/streaming-state";                   // 状态后端存储路径
+    private boolean enableCheckpoint = false;                                     // 是否启用 Checkpoint
 }

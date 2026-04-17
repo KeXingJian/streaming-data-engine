@@ -4,8 +4,10 @@ import com.kxj.streamingdataengine.ai.AdaptiveWindowManager;
 import com.kxj.streamingdataengine.ai.AnomalyDetector;
 import com.kxj.streamingdataengine.ai.BackpressureController;
 import com.kxj.streamingdataengine.ai.SeverityLevel;
+import com.kxj.streamingdataengine.checkpoint.*;
 import com.kxj.streamingdataengine.core.model.*;
 import com.kxj.streamingdataengine.core.operator.StreamOperator;
+import com.kxj.streamingdataengine.state.StateBackend;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -33,9 +35,18 @@ public class ExecutionEngine {
 
     private volatile boolean running = false;
 
+    // 活跃算子链与sink，用于Watermark驱动
+    private volatile List<StreamOperator<?>> activeOperators = Collections.emptyList();
+    private volatile DataSink<Object> activeSink = null;
+
     // 统计计数
     private final AtomicLong processedCount = new AtomicLong(0);
     private final AtomicLong filteredCount = new AtomicLong(0);
+
+    // Checkpoint 相关
+    private CheckpointCoordinator checkpointCoordinator;
+    private StateBackend stateBackend;
+    private CheckpointConfig checkpointConfig;
 
     public ExecutionEngine(int parallelism, Duration watermarkInterval,
                           boolean enableAdaptiveWindow, boolean enableBackpressure) {
@@ -65,6 +76,11 @@ public class ExecutionEngine {
         log.info("[kxj: 执行引擎启动] parallelism={}, 自适应窗口={}, 背压控制={}",
                 parallelism, enableAdaptiveWindow, enableBackpressure);
 
+        // [kxj: 启动Checkpoint协调器，定时触发状态快照]
+        if (checkpointCoordinator != null) {
+            checkpointCoordinator.start();
+        }
+
         // [kxj: 启动Watermark生成器，按固定间隔推进事件时间]
         executorService.submit(this::generateWatermarks);
 
@@ -80,22 +96,56 @@ public class ExecutionEngine {
     }
 
     /**
+     * 初始化 Checkpoint 支持
+     */
+    public void initializeCheckpoint(CheckpointConfig config, StateBackend stateBackend,
+                                     CheckpointCoordinator.CheckpointListener listener) {
+        this.checkpointConfig = config;
+        this.stateBackend = stateBackend;
+        if (config != null && config.isEnabled()) {
+            this.checkpointCoordinator = new CheckpointCoordinator(config, stateBackend, listener);
+            log.info("[kxj: Checkpoint 已初始化] interval={}ms", config.getInterval().toMillis());
+        }
+    }
+
+    /**
+     * 触发手动 Checkpoint
+     */
+    public void triggerCheckpoint() {
+        if (checkpointCoordinator != null) {
+            checkpointCoordinator.triggerCheckpoint();
+        }
+    }
+
+    /**
+     * 获取 CheckpointCoordinator
+     */
+    public CheckpointCoordinator getCheckpointCoordinator() {
+        return checkpointCoordinator;
+    }
+
+    /**
      * 处理单条记录
      */
+    @SuppressWarnings("unchecked")
     public <T> List<StreamRecord<T>> processRecord(StreamRecord<T> record,
                                                     List<StreamOperator<T>> operators,
                                                     DataSink<T> sink) {
         List<StreamRecord<T>> results = new ArrayList<>();
         results.add(record);
 
+        // 处理 Checkpoint Barrier
+        if (record.value() instanceof CheckpointBarrier barrier) {
+            processCheckpointBarrier(barrier, operators);
+            return results;
+        }
+
         // 处理Watermark
         if (record.value() instanceof Watermark watermark) {
             watermarkManager.updateWatermark(watermark);
-
-            // 通知所有算子
-            for (StreamOperator<T> operator : operators) {
-                operator.processWatermark(watermark);
-            }
+            @SuppressWarnings("unchecked")
+            List<StreamOperator<?>> rawOperators = (List<StreamOperator<?>>) (List<?>) operators;
+            processWatermarkThroughPipeline(watermark, rawOperators, (DataSink<Object>) sink);
             return results;
         }
 
@@ -146,6 +196,98 @@ public class ExecutionEngine {
         }
 
         return results;
+    }
+
+    /**
+     * 处理 Checkpoint Barrier
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <T> void processCheckpointBarrier(CheckpointBarrier barrier, List<StreamOperator<T>> operators) {
+        log.debug("[kxj: 处理 Checkpoint Barrier #{}]", barrier.getCheckpointNumber());
+
+        // 触发各算子的状态快照
+        for (StreamOperator operator : operators) {
+            if (operator instanceof Snapshotable snapshotable) {
+                try {
+                    var snapshot = snapshotable.snapshotState(
+                        barrier.getCheckpointId(),
+                        barrier.getCheckpointNumber(),
+                        stateBackend
+                    );
+
+                    // 通知 CheckpointCoordinator
+                    if (checkpointCoordinator != null) {
+                        checkpointCoordinator.acknowledgeCheckpoint(
+                            barrier.getCheckpointNumber(),
+                            snapshotable.getOperatorId(),
+                            snapshot
+                        );
+                    }
+                } catch (Exception e) {
+                    log.error("[kxj: 算子快照失败 - operator={}]", operator.getName(), e);
+                    if (checkpointCoordinator != null) {
+                        checkpointCoordinator.acknowledgeCheckpoint(
+                            barrier.getCheckpointNumber(),
+                            snapshotable.getOperatorId(),
+                            null
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 设置当前活跃的算子链与sink，供全局Watermark驱动使用
+     */
+    @SuppressWarnings("unchecked")
+    public <T> void setPipeline(List<StreamOperator<T>> operators, DataSink<T> sink) {
+        this.activeOperators = (List<StreamOperator<?>>) (List<?>) operators;
+        this.activeSink = (DataSink<Object>) sink;
+    }
+
+    /**
+     * 将Watermark注入算子链，处理算子因Watermark推进而发射的记录
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void processWatermarkThroughPipeline(Watermark watermark,
+                                                  List<StreamOperator<?>> operators,
+                                                  DataSink<Object> sink) {
+        List pending = List.of(watermark);
+        for (StreamOperator operator : operators) {
+            List nextPending = new ArrayList();
+            for (Object item : pending) {
+                if (item instanceof StreamRecord record) {
+                    List processed = operator.processElement(record);
+                    if (processed != null) {
+                        nextPending.addAll(processed);
+                    }
+                }
+            }
+            List emitted = operator.processWatermark(watermark);
+            System.out.println("[ExecutionEngine] processWatermarkThroughPipeline operator=" + operator.getName()
+                    + " wm=" + watermark.getTimestamp()
+                    + " emitted=" + (emitted != null ? emitted.size() : 0)
+                    + " values=" + (emitted != null ? emitted : "null"));
+            if (emitted != null) {
+                nextPending.addAll(emitted);
+            }
+            pending = nextPending;
+        }
+        System.out.println("[ExecutionEngine] processWatermarkThroughPipeline final pending size=" + pending.size()
+                + " values=" + pending);
+        if (sink != null) {
+            for (Object item : pending) {
+                if (item instanceof StreamRecord record) {
+                    try {
+                        System.out.println("[ExecutionEngine] writing to sink: " + record.value());
+                        sink.write(record.value());
+                    } catch (Exception e) {
+                        log.error("Sink write failed", e);
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -227,6 +369,9 @@ public class ExecutionEngine {
                 Watermark watermark = new Watermark(currentWatermark);
                 watermarkManager.updateWatermark(watermark);
 
+                // [kxj: 将全局Watermark驱动注入活跃算子链]
+                processWatermarkThroughPipeline(watermark, activeOperators, activeSink);
+
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -304,6 +449,12 @@ public class ExecutionEngine {
      */
     public void stop() {
         running = false;
+
+        // [kxj: 停止Checkpoint协调器]
+        if (checkpointCoordinator != null) {
+            checkpointCoordinator.stop();
+        }
+
         executorService.shutdown();
         try {
             if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {

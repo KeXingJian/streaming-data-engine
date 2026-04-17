@@ -23,8 +23,9 @@ public interface StreamOperator<T> {
 
     /**
      * 处理Watermark
+     * @return 算子因Watermark推进而发射的记录列表
      */
-    void processWatermark(Watermark watermark);
+    List<StreamRecord<T>> processWatermark(Watermark watermark);
 
     /**
      * 打开算子

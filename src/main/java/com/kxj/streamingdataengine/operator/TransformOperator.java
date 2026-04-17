@@ -36,7 +36,8 @@ public class TransformOperator<T> implements StreamOperator<T> {
     }
 
     @Override
-    public void processWatermark(Watermark watermark) {
-        // 转换算子不处理Watermark
+    public List<StreamRecord<T>> processWatermark(Watermark watermark) {
+        // 转换算子不处理Watermark，返回空列表
+        return Collections.emptyList();
     }
 }
