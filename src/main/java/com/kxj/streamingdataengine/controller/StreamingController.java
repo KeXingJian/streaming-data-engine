@@ -49,9 +49,9 @@ public class StreamingController {
     /**
      * 聚合统计演示
      */
-    @GetMapping("/demo/aggregate")
-    public Map<String, Object> aggregateDemo() {
-        List<Double> temperatures = generateTemperatureData(100);
+    @GetMapping("/demo/aggregate/{num}")
+    public Map<String, Object> aggregateDemo(@PathVariable int num) {
+        List<Double> temperatures = generateTemperatureData(num);
 
         // 使用项目流式引擎做全局聚合
         CollectSink<Map<String, Object>> sink = new CollectSink<>();

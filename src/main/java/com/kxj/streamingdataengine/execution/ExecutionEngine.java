@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 流处理执行引擎
@@ -32,6 +33,10 @@ public class ExecutionEngine {
 
     private volatile boolean running = false;
 
+    // 统计计数
+    private final AtomicLong processedCount = new AtomicLong(0);
+    private final AtomicLong filteredCount = new AtomicLong(0);
+
     public ExecutionEngine(int parallelism, Duration watermarkInterval,
                           boolean enableAdaptiveWindow, boolean enableBackpressure) {
         this.parallelism = parallelism;                         // 并行度，同时处理任务的线程数
@@ -45,7 +50,7 @@ public class ExecutionEngine {
                 new AdaptiveWindowManager(Duration.ofSeconds(10)) : null;   // 自适应窗口管理器，动态优化窗口参数
         this.anomalyDetector = new AnomalyDetector(this::handleAnomaly);    // 异常检测器，监控流量异常并告警
         this.backpressureController = enableBackpressure ?
-                new BackpressureController() : null;            // 背压控制器，根据负载动态限流
+                new BackpressureController() : null;            // 背压控制器，根据负载动态监控和限流
     }
 
     /**
@@ -82,17 +87,6 @@ public class ExecutionEngine {
                                                     DataSink<T> sink) {
         List<StreamRecord<T>> results = new ArrayList<>();
         results.add(record);
-
-        //kxj减速降温
-        // 背压检查
-        if (enableBackpressure && !backpressureController.tryAcquire()) {
-            // 限流：等待
-            try {
-                Thread.sleep(1);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
 
         // 处理Watermark
         if (record.value() instanceof Watermark watermark) {
@@ -144,7 +138,76 @@ public class ExecutionEngine {
             backpressureController.recordSample(record, latency);
         }
 
+        // 统计
+        if (results.isEmpty()) {
+            filteredCount.incrementAndGet();
+        } else {
+            processedCount.addAndGet(results.size());
+        }
+
         return results;
+    }
+
+    /**
+     * 创建带自然背压的流水线
+     * [kxj: 管道级自然背压 - BlockingQueue + 虚拟线程消费者，队列满时主线程自动阻塞]
+     */
+    public <T> Pipeline<T> createPipeline(List<StreamOperator<T>> operators, DataSink<T> sink, int bufferSize) {
+        return new Pipeline<>(operators, sink, bufferSize);
+    }
+
+    public long getProcessedCount() {
+        return processedCount.get();
+    }
+
+    public long getFilteredCount() {
+        return filteredCount.get();
+    }
+
+    /**
+     * 流水线：生产者-消费者模型，利用 BlockingQueue 实现自然背压
+     */
+    public class Pipeline<T> {
+        private final BlockingQueue<StreamRecord<T>> queue;
+        private final CountDownLatch latch;
+
+        Pipeline(List<StreamOperator<T>> operators, DataSink<T> sink, int bufferSize) {
+            this.queue = new ArrayBlockingQueue<>(Math.max(bufferSize, 1));
+            this.latch = new CountDownLatch(parallelism);
+
+            for (int i = 0; i < parallelism; i++) {
+                executorService.submit(() -> {
+                    try {
+                        while (true) {
+                            StreamRecord<T> record = queue.take();
+                            // 毒丸信号：key 和 value 均为 null
+                            if (record.key() == null && record.value() == null) {
+                                break;
+                            }
+                            processRecord(record, operators, sink);
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+            }
+        }
+
+        public void submit(StreamRecord<T> record) throws InterruptedException {
+            queue.put(record);
+        }
+
+        /**
+         * 发送毒丸并等待所有消费者结束
+         */
+        public void complete() throws InterruptedException {
+            for (int i = 0; i < parallelism; i++) {
+                queue.put(new StreamRecord<>(null, null, 0, 0, 0));
+            }
+            latch.await();
+        }
     }
 
     /**
@@ -221,8 +284,8 @@ public class ExecutionEngine {
         switch (result.getLevel()) {
             case CRITICAL:
                 if (enableBackpressure) {
-                    // 强制降低处理速率
-                    backpressureController.setQueueSize(100000); // 模拟高队列
+                    // [kxj: CRITICAL异常流量 - 背压控制器已根据延迟自动限流]
+                    log.warn("[kxj: CRITICAL异常流量] 背压控制器自动响应中");
                 }
                 break;
             case HIGH:
@@ -257,7 +320,6 @@ public class ExecutionEngine {
      * 获取引擎状态
      */
     public EngineStatus getStatus() {
-        StringBuilder sb = new StringBuilder();
         return new EngineStatus(
                 running,
                 parallelism,

@@ -11,42 +11,31 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 动态背压控制器
- * 基于系统负载自动调整处理速率
- *
- * 控制策略：
- * 1. 队列长度监控
- * 2. 处理延迟监控
- * 3. 自适应限流（令牌桶算法）
- * 4. 多级背压响应
+ * 基于 Little's Law (L = λW) + PID 控制器预测式限流
+ * 核心策略：
+ * 1. EWMA 实时估计数据到达率
+ * 2. 用延迟和到达率推导理想处理速率
+ * 3. PID 平滑修正，避免剧烈震荡
+ * 4. 与 ExecutionEngine 的 BlockingQueue 自然背压协同工作
  */
 @Slf4j
 public class BackpressureController {
 
-    /**
-     * 队列长度阈值
-     */
-    private static final int QUEUE_LOW_THRESHOLD = 1000;
-    private static final int QUEUE_MEDIUM_THRESHOLD = 5000;
-    private static final int QUEUE_HIGH_THRESHOLD = 10000;
-
-    /**
-     * 延迟阈值（毫秒）
-     */
-    private static final long LATENCY_LOW_THRESHOLD = 100;
-    private static final long LATENCY_MEDIUM_THRESHOLD = 500;
-    private static final long LATENCY_HIGH_THRESHOLD = 1000;
+    private static final double LEARNING_RATE = 0.1;
+    private static final long MIN_RATE_LIMIT = 1000;
+    private static final long MAX_RATE_LIMIT = 100_000;
 
     @Getter
-    private final AtomicReference<SeverityLevel> currentLevel;  // 当前压力等级
-    private final AtomicInteger currentRateLimit;               // 当前限流速率（记录/秒）
-    private final ConcurrentLinkedQueue<Sample> samples;        // 采样队列
-    private final AtomicInteger monitoredQueueSize;             // 队列大小监控
-    private final LatencyStatistics latencyStatistics;          // 延迟统计信息
-    private final PIDController pidController;                  // 自适应PID控制器
-    private final long targetLatencyMs;                         // 目标延迟
+    private final AtomicReference<SeverityLevel> currentLevel;
+    private final AtomicInteger currentRateLimit;
+    private final ConcurrentLinkedQueue<Sample> samples;
+    private final LatencyStatistics latencyStatistics;
+    private final PIDController pidController;
+    private final long targetLatencyMs;
+    private double lastLatencyError = 0;
 
     public BackpressureController() {
-        this(500); // 默认目标延迟500ms
+        this(500);
     }
 
     public BackpressureController(long targetLatencyMs) {
@@ -54,182 +43,100 @@ public class BackpressureController {
         this.currentLevel = new AtomicReference<>(SeverityLevel.NORMAL);
         this.currentRateLimit = new AtomicInteger(Integer.MAX_VALUE);
         this.samples = new ConcurrentLinkedQueue<>();
-        this.monitoredQueueSize = new AtomicInteger(0);
         this.latencyStatistics = new LatencyStatistics();
-        this.pidController = new PIDController(0.5, 0.1, 0.05);
+        // 和 AdaptiveWindowManager 对齐的 PID 参数
+        this.pidController = new PIDController(0.3, 0.05, 0.02, 30.0);
     }
 
     /**
      * 记录处理样本
      */
     public void recordSample(StreamRecord<?> record, long processingLatencyMs) {
-        // [kxj: 背压控制器采样 - 收集延迟和队列大小用于动态调整限流]
-        Sample sample = new Sample(
-                System.currentTimeMillis(),
-                processingLatencyMs,
-                monitoredQueueSize.get()
-        );
+        // [kxj: 背压控制器采样 - 收集延迟用于 Little's Law 预测式限流]
+        Sample sample = new Sample(System.currentTimeMillis(), processingLatencyMs);
         samples.offer(sample);
 
-        // 清理旧样本
         cleanupOldSamples();
-
-        // 更新统计
         latencyStatistics.update(processingLatencyMs);
-
-        // [kxj: 评估系统压力并动态调整限流，确保系统稳定运行]
         evaluateAndAdjust();
     }
 
     /**
-     * 设置当前队列大小
-     */
-    public void setQueueSize(int size) {
-        monitoredQueueSize.set(size);
-    }
-
-    /**
-     * 获取当前限流速率
-     */
-    public int getCurrentRateLimit() {
-        return currentRateLimit.get();
-    }
-
-    /**
-     * 检查是否允许处理（限流检查）
-     */
-    public boolean tryAcquire() {
-        int limit = currentRateLimit.get();
-        if (limit == Integer.MAX_VALUE) {
-            return true;
-        }
-
-        // 简化的令牌桶检查
-        long now = System.currentTimeMillis();
-        return now % 1000 < (1000 * latencyStatistics.currentRate / Math.max(limit, 1));
-    }
-
-    /**
      * 评估系统状态并调整背压
+     * 基于 Little's Law + PID 控制器
      */
     private void evaluateAndAdjust() {
         long avgLatency = latencyStatistics.getAvgLatency();
-        int queueSize = monitoredQueueSize.get();
+        double arrivalRate = latencyStatistics.ewmaRate;
 
-        // 确定当前压力等级
-        SeverityLevel newLevel = determinePressureLevel(avgLatency, queueSize);
-        SeverityLevel oldLevel = currentLevel.getAndSet(newLevel);
+        if (avgLatency <= 0) {
+            return;
+        }
 
-        if (newLevel != oldLevel) {
-            log.info("Pressure level changed: {} -> {}, latency={}, queue={}",
-                    oldLevel, newLevel, avgLatency, queueSize);
-            applyPressureControl(newLevel, oldLevel);
+        long predicted;
+        double latencyError;
+
+        // 到达率过低时（< 1条/秒视为无效），退化为纯延迟比例调整
+        if (arrivalRate < 1.0) {
+            // [kxj: 到达率样本不足，退化为纯延迟比例调整]
+            double ratio = targetLatencyMs / Math.max(avgLatency, 1.0);
+            predicted = (long) (MAX_RATE_LIMIT * ratio);
+            latencyError = (targetLatencyMs - avgLatency) / (double) targetLatencyMs;
+
+            // [kxj: PID 积分饱和保护]
+            if (lastLatencyError <= 0 && latencyError > 0) {
+                pidController.reset();
+            }
+            lastLatencyError = latencyError;
         } else {
-            // 同等级内微调
-            fineTuneControl(avgLatency);
+            // [kxj: Little's Law 预测理想处理速率 - optimalRate = λ * (targetLatency / avgLatency)]
+            double optimalRate = arrivalRate * targetLatencyMs / Math.max(avgLatency, 1.0);
+
+            // PID 修正：根据延迟误差（和 AdaptiveWindowManager 对齐）
+            latencyError = (targetLatencyMs - avgLatency) / (double) targetLatencyMs;
+
+            // [kxj: PID 积分饱和保护 - 误差符号由负变正时重置积分器，防止历史过载影响恢复]
+            if (lastLatencyError <= 0 && latencyError > 0) {
+                pidController.reset();
+            }
+            lastLatencyError = latencyError;
+
+            double pidAdjustment = pidController.calculate(latencyError);
+
+            predicted = (long) (optimalRate * (1 + pidAdjustment));
+        }
+
+        // 平滑调整
+        long currentLimit = currentRateLimit.get() == Integer.MAX_VALUE ? MAX_RATE_LIMIT : currentRateLimit.get();
+        long adjusted = (long) (currentLimit + LEARNING_RATE * (predicted - currentLimit));
+        adjusted = Math.clamp(adjusted, MIN_RATE_LIMIT, MAX_RATE_LIMIT);
+
+        // 更新压力等级（兼容外部监控）
+        SeverityLevel newLevel = mapErrorToLevel(latencyError);
+        currentLevel.set(newLevel);
+
+        if (adjusted != currentLimit || currentRateLimit.get() == Integer.MAX_VALUE) {
+            currentRateLimit.set((int) adjusted);
+            log.info("[kxj: 背压限流调整] rateLimit={}, avgLatency={}, arrivalRate={}, error={}, level={}",
+                    adjusted, avgLatency,
+                    String.format("%.2f", arrivalRate),
+                    String.format("%.4f", latencyError),
+                    newLevel);
         }
     }
 
-    /**
-     * 确定压力等级
-     */
-    private SeverityLevel determinePressureLevel(long avgLatency, int queueSize) {
-        int pressureScore = 0;
-
-        // 队列长度评分
-        if (queueSize > QUEUE_HIGH_THRESHOLD) {
-            pressureScore += 3;
-        } else if (queueSize > QUEUE_MEDIUM_THRESHOLD) {
-            pressureScore += 2;
-        } else if (queueSize > QUEUE_LOW_THRESHOLD) {
-            pressureScore += 1;
-        }
-
-        // 延迟评分
-        if (avgLatency > LATENCY_HIGH_THRESHOLD) {
-            pressureScore += 3;
-        } else if (avgLatency > LATENCY_MEDIUM_THRESHOLD) {
-            pressureScore += 2;
-        } else if (avgLatency > LATENCY_LOW_THRESHOLD) {
-            pressureScore += 1;
-        }
-
-        // [kxj: 压力评分转换 - 0-1分NORMAL, 1-2分MEDIUM, 3-4分HIGH, 5+分CRITICAL]
-        if (pressureScore >= 5) {
-            return SeverityLevel.CRITICAL;
-        } else if (pressureScore >= 3) {
-            return SeverityLevel.HIGH;
-        } else if (pressureScore >= 1) {
-            return SeverityLevel.MEDIUM;
-        }
-        return SeverityLevel.NORMAL;
+    private SeverityLevel mapErrorToLevel(double latencyError) {
+        if (latencyError > -0.1) return SeverityLevel.NORMAL;
+        if (latencyError > -0.3) return SeverityLevel.MEDIUM;
+        if (latencyError > -0.6) return SeverityLevel.HIGH;
+        return SeverityLevel.CRITICAL;
     }
 
     /**
-     * 应用压力控制
+     * 获取当前限流速率（监控用）
      */
-    private void applyPressureControl(SeverityLevel level, SeverityLevel oldLevel) {
-        // [kxj: 根据压力等级设置对应限流阈值，NORMAL时重置统计恢复最佳状态]
-        int newLimit;
-
-        switch (level) {
-            case NORMAL:
-                newLimit = Integer.MAX_VALUE; // 不限流
-                // 重置统计数据，避免旧数据影响
-                latencyStatistics.reset();
-                break;
-            case MEDIUM:
-                newLimit = 50000; // 5万/秒
-                break;
-            case HIGH:
-                newLimit = 10000; // 1万/秒
-                break;
-            case CRITICAL:
-                newLimit = 1000; // 1000/秒
-                break;
-            default:
-                newLimit = Integer.MAX_VALUE;
-        }
-
-        // 更新限流：只要等级变化就更新，确保降级时能放宽
-        currentRateLimit.set(newLimit);
-        // 重置PID控制器，避免积分累积
-        pidController.reset();
-    }
-
-    /**
-     * 微调控制（PID控制）
-     * 只做保守调整，避免过度限流
-     */
-    private void fineTuneControl(long currentLatency) {
-        if (currentLevel.get() == SeverityLevel.NORMAL) {
-            return;
-        }
-
-        // 计算误差
-        double error = (double) (targetLatencyMs - currentLatency) / targetLatencyMs;
-
-        // 只在延迟低于目标时才放宽限流（error > 0）
-        // 避免在延迟高时进一步收紧限流
-        if (error < 0) {
-            return; // 延迟过高时不做微调，保持当前限流
-        }
-
-        // PID计算调整量
-        double adjustment = pidController.calculate(error);
-
-        // 只放宽限流（adjustment > 0），不收紧
-        if (adjustment <= 0) {
-            return;
-        }
-
-        // 应用调整（只放宽）
-        int currentLimit = currentRateLimit.get();
-        if (currentLimit != Integer.MAX_VALUE) {
-            int newLimit = (int) (currentLimit * (1 + adjustment));
-            newLimit = Math.min(newLimit, 100000); // 上限
-            currentRateLimit.set(newLimit);
-        }
+    public int getCurrentRateLimit() {
+        return currentRateLimit.get();
     }
 
     /**
@@ -252,46 +159,50 @@ public class BackpressureController {
      * 获取当前系统状态报告
      */
     public SystemStatus getStatus() {
+        long avgLatency = latencyStatistics.getAvgLatency();
+        double arrivalRate = latencyStatistics.ewmaRate;
+        // Little's Law 计算等效队列长度: L = λW
+        long equivalentQueueSize = avgLatency > 0 ? (long) (arrivalRate * avgLatency / 1000.0) : 0;
         return new SystemStatus(
                 currentLevel.get(),
                 currentRateLimit.get(),
-                latencyStatistics.getAvgLatency(),
-                monitoredQueueSize.get(),
-                latencyStatistics.currentRate
+                avgLatency,
+                equivalentQueueSize,
+                arrivalRate
         );
     }
 
     // ============== 内部类和记录 ==============
 
-    public record SystemStatus(SeverityLevel pressureLevel, int rateLimit, long avgLatencyMs, int queueSize,
+    public record SystemStatus(SeverityLevel pressureLevel, int rateLimit, long avgLatencyMs, long queueSize,
                                double currentRate) {
     }
 
-    private record Sample(long timestamp, long latency, int queueSize) {}
+    private record Sample(long timestamp, long latency) {
+    }
 
     /**
      * 延迟统计
+     * 使用 EWMA 实时估计到达率，避免固定窗口的盲区
      */
     private static class LatencyStatistics {
         private final AtomicLong totalLatency = new AtomicLong(0);
         private final AtomicLong sampleCount = new AtomicLong(0);
-        private final AtomicLong lastRateCheck = new AtomicLong(0);
-        private final AtomicLong lastRateCount = new AtomicLong(0);
-        volatile double currentRate = 0;
+        private final AtomicLong lastUpdateTime = new AtomicLong(0);
+        volatile double ewmaRate = 0;
+        private static final double ALPHA = 0.3;
 
         void update(long latency) {
             totalLatency.addAndGet(latency);
-            long count = sampleCount.incrementAndGet();
+            sampleCount.incrementAndGet();
 
-            // 计算速率
+            // EWMA 到达率：每条样本都贡献一个瞬时到达率估计
             long now = System.currentTimeMillis();
-            long lastCheck = lastRateCheck.get();
-            if (now - lastCheck >= 1000) {
-                long lastCount = lastRateCount.getAndSet(count);
-                if (lastCheck > 0) {
-                    currentRate = (count - lastCount) * 1000.0 / (now - lastCheck);
-                }
-                lastRateCheck.set(now);
+            long lastTime = lastUpdateTime.getAndSet(now);
+            if (lastTime > 0) {
+                double elapsed = now - lastTime;
+                double instantRate = 1000.0 / Math.max(elapsed, 1);
+                ewmaRate = ALPHA * instantRate + (1 - ALPHA) * ewmaRate;
             }
         }
 
@@ -303,9 +214,8 @@ public class BackpressureController {
         void reset() {
             totalLatency.set(0);
             sampleCount.set(0);
-            lastRateCheck.set(0);
-            lastRateCount.set(0);
-            currentRate = 0;
+            lastUpdateTime.set(0);
+            ewmaRate = 0;
         }
     }
 }

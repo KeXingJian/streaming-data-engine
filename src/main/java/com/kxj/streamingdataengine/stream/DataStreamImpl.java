@@ -122,6 +122,7 @@ public class DataStreamImpl<T> implements DataStream<T> {
         log.info("[kxj: 执行流] jobName={}, 转换链长度={}, sinks数量={}", jobName, transformations.size(), sinks.size());
         engine.start();
 
+        ExecutionEngine.Pipeline<T> pipeline = null;
         try {
             // 初始化sinks
             for (DataSink<T> sink : sinks) {
@@ -147,25 +148,37 @@ public class DataStreamImpl<T> implements DataStream<T> {
                 }
             };
 
-            int processedCount = 0;
-            int filteredCount = 0;
-            // [kxj: 从source读取数据，交由engine处理，应用算子链并写入sink]
-            while (source.hasMore()) {
-                StreamRecord<T> record = source.nextRecord();
-                if (record != null) {
-                    List<StreamRecord<T>> results = engine.processRecord(record, operators, combinedSink);
-                    if (results.isEmpty()) {
-                        filteredCount++;
-                    } else {
-                        processedCount += results.size();
+            if (config.isEnableBackpressure()) {
+                // [kxj: 启用管道级自然背压 - BlockingQueue + 虚拟线程消费者]
+                pipeline = engine.createPipeline(operators, combinedSink, config.getBufferSize());
+                while (source.hasMore()) {
+                    StreamRecord<T> record = source.nextRecord();
+                    if (record != null) {
+                        pipeline.submit(record);
+                    }
+                }
+            } else {
+                // [kxj: 从source读取数据，交由engine处理，应用算子链并写入sink]
+                while (source.hasMore()) {
+                    StreamRecord<T> record = source.nextRecord();
+                    if (record != null) {
+                        engine.processRecord(record, operators, combinedSink);
                     }
                 }
             }
-            log.info("[kxj: 执行完成] 处理记录数={}, 过滤记录数={}", processedCount, filteredCount);
 
         } catch (Exception e) {
             log.error("Stream execution failed", e);
         } finally {
+            if (pipeline != null) {
+                try {
+                    pipeline.complete();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            log.info("[kxj: 执行完成] 处理记录数={}, 过滤记录数={}", engine.getProcessedCount(), engine.getFilteredCount());
+
             // 关闭sinks
             for (DataSink<T> sink : sinks) {
                 try {

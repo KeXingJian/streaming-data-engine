@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Random;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -26,18 +25,15 @@ public class BackpressureControllerTest {
         log.info("测试压力等级变化");
 
         BackpressureController controller = new BackpressureController(200);
-        Random random = new Random();
 
         // 初始状态
         BackpressureController.SystemStatus status1 = controller.getStatus();
         log.info("初始状态: {}", status1);
         assertEquals(SeverityLevel.NORMAL, status1.pressureLevel());
 
-        // 模拟高负载（长延迟+大队列）
+        // 模拟高负载（高延迟驱动限流）
         for (int i = 0; i < 50; i++) {
-            controller.setQueueSize(8000); // 高队列
-            StreamRecord<String> record = createRecord();
-            controller.recordSample(record, 800); // 高延迟
+            controller.recordSample(createRecord(), 800); // 高延迟
         }
 
         BackpressureController.SystemStatus status2 = controller.getStatus();
@@ -48,14 +44,13 @@ public class BackpressureControllerTest {
     }
 
     @Test
-    @DisplayName("限流功能测试")
-    void testRateLimiting() {
-        log.info("测试限流功能");
+    @DisplayName("限流速率调整测试")
+    void testRateLimitAdjustment() {
+        log.info("测试限流速率调整");
 
         BackpressureController controller = new BackpressureController(100);
 
         // 模拟高压力，触发限流
-        controller.setQueueSize(6000);
         for (int i = 0; i < 100; i++) {
             controller.recordSample(createRecord(), 600);
         }
@@ -64,35 +59,17 @@ public class BackpressureControllerTest {
         log.info("当前限流: {}/秒", limit);
 
         assertTrue(limit < Integer.MAX_VALUE, "应该有限流");
-
-        // 测试tryAcquire
-        int acquired = 0;
-        int rejected = 0;
-        for (int i = 0; i < 1000; i++) {
-            if (controller.tryAcquire()) {
-                acquired++;
-            } else {
-                rejected++;
-            }
-        }
-
-        log.info("获取成功: {}, 拒绝: {}", acquired, rejected);
-
-        // 限流时应该有拒绝
-        if (limit < 10000) {
-            assertTrue(rejected > 0, "限流时应该有拒绝");
-        }
+        assertTrue(limit < 50000, "高压力下限流应该显著降低");
     }
 
     @Test
     @DisplayName("背压恢复测试")
-    void testBackpressureRecovery() throws InterruptedException {
+    void testBackpressureRecovery() {
         log.info("测试背压恢复");
 
         BackpressureController controller = new BackpressureController(200);
 
         // 先制造高压力
-        controller.setQueueSize(8000);
         for (int i = 0; i < 50; i++) {
             controller.recordSample(createRecord(), 1000);
         }
@@ -103,16 +80,14 @@ public class BackpressureControllerTest {
 
         assertNotEquals(SeverityLevel.NORMAL, highStatus.pressureLevel());
 
-        // 恢复正常
-        controller.setQueueSize(100);
-        for (int i = 0; i < 100; i++) {
+        // 恢复正常（需要足够多的样本把 avgLatency 拉低到目标以下）
+        for (int i = 0; i < 500; i++) {
             controller.recordSample(createRecord(), 50);
-            Thread.sleep(5);
         }
 
         BackpressureController.SystemStatus normalStatus = controller.getStatus();
-        log.info("恢复后状态: level={}, limit={}",
-                normalStatus.pressureLevel(), normalStatus.rateLimit());
+        log.info("恢复后状态: level={}, limit={}, avgLatency={}",
+                normalStatus.pressureLevel(), normalStatus.rateLimit(), normalStatus.avgLatencyMs());
 
         // 应该恢复到正常或接近正常
         assertTrue(normalStatus.rateLimit() > highStatus.rateLimit(),
@@ -120,15 +95,13 @@ public class BackpressureControllerTest {
     }
 
     @Test
-    @DisplayName("并发访问测试")
-    void testConcurrentAccess() throws InterruptedException {
-        log.info("测试并发访问");
+    @DisplayName("并发采样测试")
+    void testConcurrentSampling() throws InterruptedException {
+        log.info("测试并发采样");
 
         BackpressureController controller = new BackpressureController(200);
         ExecutorService executor = Executors.newFixedThreadPool(20);
         CountDownLatch latch = new CountDownLatch(20);
-        AtomicLong successCount = new AtomicLong(0);
-        AtomicLong failCount = new AtomicLong(0);
 
         long start = System.currentTimeMillis();
 
@@ -137,16 +110,8 @@ public class BackpressureControllerTest {
                 try {
                     Random random = new Random();
                     for (int i = 0; i < 500; i++) {
-                        if (controller.tryAcquire()) {
-                            successCount.incrementAndGet();
-
-                            // 模拟处理
-                            StreamRecord<String> record = createRecord();
-                            controller.recordSample(record, random.nextInt(100));
-                            controller.setQueueSize(random.nextInt(10000));
-                        } else {
-                            failCount.incrementAndGet();
-                        }
+                        StreamRecord<String> record = createRecord();
+                        controller.recordSample(record, random.nextInt(100));
                     }
                 } finally {
                     latch.countDown();
@@ -159,12 +124,14 @@ public class BackpressureControllerTest {
 
         long duration = System.currentTimeMillis() - start;
 
-        log.info("并发测试完成: 成功={}, 拒绝={}, 耗时={}ms",
-                successCount.get(), failCount.get(), duration);
+        log.info("并发测试完成: 耗时={}ms", duration);
 
         // 验证状态仍然有效
         BackpressureController.SystemStatus status = controller.getStatus();
         assertNotNull(status);
+        assertTrue(status.avgLatencyMs() >= 0);
+        // EWMA 到达率应该在采样后为非零值
+        assertTrue(status.currentRate() > 0, "EWMA 到达率应该大于 0");
     }
 
     @Test
@@ -179,8 +146,6 @@ public class BackpressureControllerTest {
         for (int i = 0; i < 50; i++) {
             strictController.recordSample(createRecord(), 500);
             relaxedController.recordSample(createRecord(), 500);
-            strictController.setQueueSize(3000);
-            relaxedController.setQueueSize(3000);
         }
 
         int strictLimit = strictController.getCurrentRateLimit();
@@ -190,7 +155,6 @@ public class BackpressureControllerTest {
                 strictLimit, relaxedLimit);
 
         // 严格控制器应该更严格（限流更低）
-        // 注意：这个测试可能不稳定，因为状态机可能有延迟
         log.info("严格限流 <= 宽松限流: {}", strictLimit <= relaxedLimit);
     }
 

@@ -8,7 +8,9 @@
       "Bash(perl:*)",
       "Bash(for f:*)",
       "Bash(do)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(python3 -c \":*)",
+      "Bash(git stash:*)"
     ]
   }
 }

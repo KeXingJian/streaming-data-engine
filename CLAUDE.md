@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Execution Engine
 `ExecutionEngine` is the central scheduler:
 - Uses `Executors.newVirtualThreadPerTaskExecutor()` for all async work.
-- Coordinates `WatermarkManager` (event-time progress), `AdaptiveWindowManager` (dynamic window sizing), `AnomalyDetector` (3-sigma anomaly detection), and `BackpressureController` (PID-based rate limiting).
+- Coordinates `WatermarkManager` (per-partition watermark tracking, global watermark = min of active partitions), `AdaptiveWindowManager` (dynamic window sizing), `AnomalyDetector` (3-sigma anomaly detection), and `BackpressureController` (load-aware rate limiting).
 - `processRecord` applies the operator chain, handles watermarks, samples for adaptive/AI features, and writes to sinks.
 
 ### Storage Layer (LSM-Tree)
@@ -49,12 +49,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `CompactionStrategy` (size-tiered / leveled) merges segments in the background.
 
 ### Windowing
-`WindowAssigner` provides tumbling, sliding, session, global, and count-based windows. `WindowedStreamImpl` and `KeyedStreamImpl` are inner classes of `DataStreamImpl`. Default triggers: `EventTimeTrigger` for time windows, `ProcessingTimeTrigger` for global/count windows.
+`WindowAssigner` in `window.WindowAssigner` provides tumbling, sliding, session, global, and count-based windows. `WindowedStreamImpl` and `KeyedStreamImpl` are inner classes of `DataStreamImpl`. Default triggers: `EventTimeTrigger` for time windows, `ProcessingTimeTrigger` for global/count windows.
 
 ### AI Control Layer
-- `AdaptiveWindowManager`: EWMA-based traffic prediction to adjust window size.
+- `AdaptiveWindowManager`: Uses **Little's Law (L = λW) + PID controller** to predict and smooth window size adjustments based on arrival rate and latency percentiles. Also dynamically adjusts `maxOutOfOrderness`.
 - `AnomalyDetector`: 3-sigma statistical detection with change-rate and periodicity checks.
-- `BackpressureController`: monitors queue length and latency, uses a PID controller to regulate throughput.
+- `BackpressureController`: Severity-level based rate limiting (NORMAL / MEDIUM / HIGH / CRITICAL thresholds) plus PID fine-tuning that only relaxes the limit when latency is below target.
+
+### REST API
+`StreamingController` exposes demo endpoints under `/api/stream`:
+- `GET /api/stream/demo/basic` — basic filter+map demo.
+- `GET /api/stream/demo/aggregate/{num}` — global aggregation demo.
+- `POST /api/stream/process` — process a list of maps through the engine.
+- `GET /api/stream/status` — engine status and memory info.
 
 ## Code Conventions
 
@@ -75,7 +82,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `src/main/java/com/kxj/streamingdataengine/stream/StreamBuilder.java` — API entry point.
 - `src/main/java/com/kxj/streamingdataengine/stream/DataStreamImpl.java` — stream DSL implementation.
+- `src/main/java/com/kxj/streamingdataengine/stream/StreamConfig.java` — engine configuration (parallelism, watermark interval, adaptive window, backpressure).
 - `src/main/java/com/kxj/streamingdataengine/execution/ExecutionEngine.java` — core scheduler.
+- `src/main/java/com/kxj/streamingdataengine/execution/WatermarkManager.java` — multi-partition watermark tracking.
 - `src/main/java/com/kxj/streamingdataengine/storage/lsm/LSMTree.java` — storage engine.
+- `src/main/java/com/kxj/streamingdataengine/window/WindowAssigner.java` — window factory methods.
+- `src/main/java/com/kxj/streamingdataengine/controller/StreamingController.java` — REST demo endpoints.
+- `src/main/java/com/kxj/streamingdataengine/sink/CollectSink.java` — test-friendly sink that collects outputs into a list.
 - `src/main/resources/logback-spring.xml` — logging config.
 - `src/main/resources/application.yaml` — minimal Spring Boot config.

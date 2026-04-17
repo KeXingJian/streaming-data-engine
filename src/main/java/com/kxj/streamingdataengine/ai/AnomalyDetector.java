@@ -250,7 +250,7 @@ public class AnomalyDetector {
             this.sumSquares = 0;
         }
 
-        void add(double value) {
+        synchronized void add(double value) {
             values.offer(value);
             sum += value;
             sumSquares += value * value;
@@ -262,30 +262,30 @@ public class AnomalyDetector {
             }
         }
 
-        double getMean() {
+        synchronized double getMean() {
             return values.isEmpty() ? 0 : sum / values.size();
         }
 
-        double getStdDev() {
+        synchronized double getStdDev() {
             if (values.isEmpty()) return 0;
             double mean = getMean();
             double variance = sumSquares / values.size() - mean * mean;
             return Math.sqrt(Math.max(0, variance));
         }
 
-        double getMin() {
+        synchronized double getMin() {
             return values.stream().mapToDouble(Double::doubleValue).min().orElse(0);
         }
 
-        double getMax() {
+        synchronized double getMax() {
             return values.stream().mapToDouble(Double::doubleValue).max().orElse(0);
         }
 
-        long getCount() {
+        synchronized long getCount() {
             return values.size();
         }
 
-        List<Double> getRecentValues(int n) {
+        synchronized List<Double> getRecentValues(int n) {
             List<Double> result = new ArrayList<>();
             Iterator<Double> it = values.iterator();
             while (it.hasNext() && result.size() < n) {
