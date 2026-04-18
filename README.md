@@ -211,10 +211,90 @@ builder.fromCollection(largeDataSet)
 1. 在 `PIDController` 中增加 `integralClamp`，将积分限制在合理范围
 2. 在 `BackpressureController` 中监测延迟误差符号翻转 (`lastLatencyError <= 0 && latencyError > 0`)，触发 `pidController.reset()` 清零历史累积
 
+## 新增特性（2024 Q4）
+
+### 1. Checkpoint 容错机制
+- **Barrier 对齐**: 参考 Flink 的 Chandy-Lamport 算法实现多输入算子 Barrier 对齐
+- **状态快照**: 支持算子级状态快照和恢复
+- **两阶段提交**: 与 Kafka Sink 集成实现 Exactly-Once
+
+### 2. 分区级 Watermark 管理
+- **多分区独立 Watermark**: 每个数据源分区维护独立 Watermark
+- **全局 Watermark 计算**: 取活跃分区最小值保证数据完整性
+- **空闲分区检测**: 自动检测并处理空闲分区防止 Watermark 停滞
+
+### 3. Kafka 连接器
+- **Kafka Source**: 消费者组并行消费、自动重平衡、offset 管理
+- **Kafka Sink**: 异步批量写入、事务支持、两阶段提交
+- **Exactly-Once 语义**: 端到端精确一次处理
+
+### 4. 持久化状态后端
+- **PersistentLSMTree**: 真正持久化到指定目录（非临时文件）
+- **WAL 恢复**: 启动时从 WAL 恢复未刷盘数据
+- **Segment 加载**: 自动加载已有的磁盘 Segment 文件
+
+## 应用封装示例
+
+```java
+// 实时订单分析应用
+RealTimeOrderAnalyticsApp app = RealTimeOrderAnalyticsApp.builder()
+    .bootstrapServers("localhost:9092")
+    .inputTopic("orders")
+    .outputTopic("order-stats")
+    .build();
+
+app.start();
+```
+
+## 项目结构
+
+```
+src/main/java/com/kxj/streamingdataengine/
+├── app/                    # 应用层（封装示例）
+├── checkpoint/             # Checkpoint 容错机制
+│   ├── CheckpointBarrier.java
+│   ├── AligningBarrierHandler.java    # Barrier 对齐核心
+│   └── AbstractMultiInputOperator.java
+├── connector/kafka/        # Kafka 连接器
+│   ├── KafkaSource.java
+│   ├── KafkaSink.java
+│   └── KafkaConnectorConfig.java
+├── core/                   # 运行时核心
+│   ├── model/              # 数据模型
+│   ├── operator/           # 算子接口
+│   └── watermark/          # Watermark 管理
+│       ├── WatermarkStrategy.java
+│       └── PartitionedWatermarkManager.java  # 分区 Watermark
+├── storage/lsm/            # 存储层
+│   ├── LSMTree.java        # 基础 LSM-Tree
+│   ├── PersistentLSMTree.java            # 持久化版本
+│   └── WriteAheadLog.java
+├── ai/                     # 智能控制层
+│   ├── AdaptiveWindowManager.java
+│   ├── AnomalyDetector.java
+│   └── BackpressureController.java
+└── stream/                 # DSL 层
+    ├── StreamBuilder.java
+    └── DataStreamImpl.java
+```
+
+## 学习价值
+
+本项目适合作为**流式处理框架学习**的实习项目：
+
+1. **架构设计**: 分层架构（DSL → Core → Storage）
+2. **算法实现**: 
+   - Chandy-Lamport 分布式快照（简化版）
+   - LSM-Tree 存储引擎
+   - PID 控制器 + Little's Law
+3. **工程实践**:
+   - Java 21 虚拟线程
+   - 设计模式（Builder、Strategy、Template Method）
+   - 测试策略（单元、集成、属性测试）
+
 ## 扩展计划
 
-- [ ] 分布式执行（支持多节点）
-- [ ] SQL 查询接口
-- [ ] 更多数据源连接器（Kafka、Pulsar 等）
+- [ ] SQL 查询接口（Calcite 集成）
+- [ ] 更多数据源连接器（Pulsar、RocketMQ）
+- [ ] Web UI 监控面板（Grafana 集成）
 - [ ] 机器学习集成（实时模型推理）
-- [ ] Web UI 监控面板

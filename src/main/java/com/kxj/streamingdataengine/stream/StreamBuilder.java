@@ -2,7 +2,6 @@ package com.kxj.streamingdataengine.stream;
 
 import com.kxj.streamingdataengine.connector.kafka.KafkaSource;
 import com.kxj.streamingdataengine.connector.kafka.KafkaSourceStream;
-import com.kxj.streamingdataengine.core.model.DataSink;
 import com.kxj.streamingdataengine.core.model.DataSource;
 import com.kxj.streamingdataengine.core.model.StreamRecord;
 import com.kxj.streamingdataengine.core.watermark.WatermarkStrategy;
@@ -12,7 +11,7 @@ import org.apache.kafka.common.serialization.Deserializer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Function;
+
 
 /**
  * 数据流构建器
