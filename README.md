@@ -2,6 +2,16 @@
 
 一个基于 Java 21 的轻量级高性能流式数据处理引擎，借鉴 Kafka（日志结构化存储）、Flink（事件时间 / 窗口 / Watermark）和 ClickHouse（MergeTree 增量聚合）的核心设计思想。
 
+**已封装为 Web 演示应用！** 访问 http://localhost:8081 即可体验交互式流处理演示。
+
+## 项目结构
+
+```
+streaming-data-engine/
+├── engine/          # 核心引擎模块（LSM-Tree、窗口、AI控制）
+└── web/             # Web 演示应用（Spring Boot + 前端界面）
+```
+
 ## 技术栈
 
 - **Java 21** — 虚拟线程、Records、模式匹配
@@ -9,7 +19,30 @@
 - **Spring Boot 3.5+** — Web 启动器和 REST 演示接口
 - **Lombok** — `@Slf4j`、`@RequiredArgsConstructor`、`@Getter`
 
-## 构建与测试
+## 快速开始
+
+### 方式一：Web 演示应用（推荐）
+
+启动交互式 Web 界面，在浏览器中体验流处理功能：
+
+```bash
+# 1. 编译整个项目
+./mvnw clean install -DskipTests
+
+# 2. 启动 Web 应用
+./mvnw spring-boot:run -pl web
+
+# 3. 打开浏览器访问 http://localhost:8081
+```
+
+Web 界面功能：
+- **基础流处理演示** - filter + map 操作演示
+- **聚合统计演示** - 实时数据统计分析
+- **IoT 传感器模拟** - 多传感器数据实时聚合
+- **自定义数据处理** - 提交 JSON 数据实时处理
+- **引擎状态监控** - 实时查看内存和性能指标
+
+### 方式二：核心引擎测试
 
 ```bash
 # 编译
@@ -23,9 +56,43 @@
 
 # 运行单个测试方法
 ./mvnw test -Dtest=IoTScenarioTest#testSensorDataAggregation
+```
 
-# 启动 Spring Boot 演示服务
-./mvnw spring-boot:run
+## Web API 接口
+
+启动 Web 应用后，可以通过以下 REST API 调用流处理功能：
+
+### 演示接口
+
+| 接口 | 方法 | 描述 |
+|-----|------|------|
+| `GET /` | - | Web 界面主页 |
+| `GET /api/stream/status` | - | 获取引擎状态 |
+| `GET /api/stream/demo/basic` | - | 基础流处理演示（filter + map） |
+| `GET /api/stream/demo/aggregate/{count}` | - | 聚合统计演示 |
+| `GET /api/stream/demo/iot?sensors=3&readings=50` | - | IoT 传感器数据模拟 |
+
+### 数据处理接口
+
+| 接口 | 方法 | 描述 |
+|-----|------|------|
+| `POST /api/stream/process` | JSON | 自定义数据处理 |
+
+**请求示例：**
+```bash
+curl -X POST http://localhost:8081/api/stream/process \
+  -H "Content-Type: application/json" \
+  -d '[{"name": "item1", "value": 10}, {"name": "item2", "value": 20}]'
+```
+
+**响应示例：**
+```json
+{
+  "inputCount": 2,
+  "outputCount": 2,
+  "durationMs": 45,
+  "throughput": "44.44 records/s"
+}
 ```
 
 ## 核心特性

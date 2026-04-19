@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: streaming-data-engine-web
+
+server:
+  port: 8081
+
+logging:
+  level:
+    com.kxj.streamingdataengine: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

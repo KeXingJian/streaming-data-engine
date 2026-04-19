@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>流式数据处理引擎 - 演示平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .feature-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .feature-card p {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .demo-section {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .demo-section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #38a169;
+        }
+
+        .btn-info {
+            background: #4299e1;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #3182ce;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .input-group label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .input-group input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100px;
+        }
+
+        .result-panel {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .result-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .json-display {
+            background: #2d3748;
+            color: #68d391;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .status-bar {
+            background: #2d3748;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .status-bar h3 {
+            margin-bottom: 10px;
+            color: #68d391;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .status-item {
+            background: rgba(255,255,255,0.1);
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .status-item label {
+            font-size: 0.8em;
+            opacity: 0.8;
+        }
+
+        .status-item value {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .error {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ 流式数据处理引擎</h1>
+            <p>高性能实时数据处理演示平台 - 基于 LSM-Tree、Watermark、AI自适应控制</p>
+        </div>
+
+        <div class="features">
+            <div class="feature-card">
+                <h3>🗄️ LSM-Tree 存储</h3>
+                <p>Log-Structured Merge-Tree 高效存储引擎</p>
+            </div>
+            <div class="feature-card">
+                <h3>⏱️ Watermark 机制</h3>
+                <p>事件时间处理，乱序数据支持</p>
+            </div>
+            <div class="feature-card">
+                <h3>📊 增量聚合</h3>
+                <p>MergeTree 风格的实时聚合计算</p>
+            </div>
+            <div class="feature-card">
+                <h3>🤖 AI 控制</h3>
+                <p>自适应窗口、异常检测、背压控制</p>
+            </div>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+            <h3>📈 引擎状态</h3>
+            <div class="status-grid" id="statusGrid">
+                <div class="loading show">
+                    <div class="spinner"></div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>1️⃣ 基础流处理演示</h2>
+            <p style="margin-bottom: 15px; color: #666;">
+                演示 filter + map 操作：过滤偶数并计算平方
+            </p>
+            <div class="controls">
+                <button class="btn btn-primary" onclick="runBasicDemo()">运行演示</button>
+            </div>
+            <div class="result-panel" id="basicResult" style="display: none;">
+                <h3>处理结果</h3>
+                <div class="json-display"></div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>2️⃣ 聚合统计演示</h2>
+            <p style="margin-bottom: 15px; color: #666;">
+                生成随机温度数据，使用 keyBy + aggregate 进行流式聚合统计
+            </p>
+            <div class="input-group">
+                <label>数据量：</label>
+                <input type="number" id="aggregateCount" value="100" min="10" max="10000">
+            </div>
+            <div class="controls">
+                <button class="btn btn-secondary" onclick="runAggregateDemo()">运行聚合</button>
+            </div>
+            <div class="result-panel" id="aggregateResult" style="display: none;">
+                <h3>统计结果</h3>
+                <div class="json-display"></div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>3️⃣ IoT 传感器数据模拟</h2>
+            <p style="margin-bottom: 15px; color: #666;">
+                模拟多个传感器的数据采集，实时聚合每个传感器的统计信息
+            </p>
+            <div class="input-group">
+                <label>传感器数量：</label>
+                <input type="number" id="sensorCount" value="3" min="1" max="10">
+                <label>每传感器读数：</label>
+                <input type="number" id="readingCount" value="50" min="10" max="500">
+            </div>
+            <div class="controls">
+                <button class="btn btn-info" onclick="runIoTDemo()">模拟IoT数据</button>
+            </div>
+            <div class="result-panel" id="iotResult" style="display: none;">
+                <h3>传感器统计</h3>
+                <div class="json-display"></div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>4️⃣ 自定义数据处理</h2>
+            <p style="margin-bottom: 15px; color: #666;">
+                提交自定义 JSON 数据进行实时处理（value 字段将被计算平方）
+            </p>
+            <textarea id="customData" placeholder='[
+  {"name": "item1", "value": 10},
+  {"name": "item2", "value": 20},
+  {"name": "item3", "value": 30}
+]'></textarea>
+            <div class="controls">
+                <button class="btn btn-primary" onclick="runCustomProcess()">处理数据</button>
+            </div>
+            <div class="result-panel" id="customResult" style="display: none;">
+                <h3>处理结果</h3>
+                <div class="json-display"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 页面加载时获取状态
+        window.onload = function() {
+            loadStatus();
+            // 每 30 秒刷新一次状态
+            setInterval(loadStatus, 30000);
+        };
+
+        // 显示加载动画
+        function showLoading(elementId) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = '<div class="loading show"><div class="spinner"></div><p>处理中...</p></div>';
+            element.style.display = 'block';
+        }
+
+        // 显示结果
+        function showResult(elementId, data) {
+            const element = document.getElementById(elementId);
+            element.querySelector('.json-display').textContent = JSON.stringify(data, null, 2);
+            element.style.display = 'block';
+        }
+
+        // 显示错误
+        function showError(elementId, message) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="error">❌ ${message}</div>`;
+            element.style.display = 'block';
+        }
+
+        // 加载引擎状态
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/stream/status');
+                const data = await response.json();
+
+                const statusGrid = document.getElementById('statusGrid');
+                statusGrid.innerHTML = `
+                    <div class="status-item">
+                        <div style="font-size: 0.8em; opacity: 0.8;">引擎版本</div>
+                        <div style="font-size: 1.2em; font-weight: bold;">${data.version}</div>
+                    </div>
+                    <div class="status-item">
+                        <div style="font-size: 0.8em; opacity: 0.8;">处理器核心</div>
+                        <div style="font-size: 1.2em; font-weight: bold;">${data.processors} 核</div>
+                    </div>
+                    <div class="status-item">
+                        <div style="font-size: 0.8em; opacity: 0.8;">内存使用</div>
+                        <div style="font-size: 1.2em; font-weight: bold;">${data.memory.usagePercent}</div>
+                    </div>
+                    <div class="status-item">
+                        <div style="font-size: 0.8em; opacity: 0.8;">已用 / 最大</div>
+                        <div style="font-size: 1.2em; font-weight: bold;">${data.memory.usedMB} / ${data.memory.maxMB} MB</div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('加载状态失败:', error);
+            }
+        }
+
+        // 基础演示
+        async function runBasicDemo() {
+            showLoading('basicResult');
+            try {
+                const response = await fetch('/api/stream/demo/basic');
+                const data = await response.json();
+                showResult('basicResult', data);
+            } catch (error) {
+                showError('basicResult', '请求失败: ' + error.message);
+            }
+        }
+
+        // 聚合演示
+        async function runAggregateDemo() {
+            const count = document.getElementById('aggregateCount').value;
+            showLoading('aggregateResult');
+            try {
+                const response = await fetch(`/api/stream/demo/aggregate/${count}`);
+                const data = await response.json();
+                showResult('aggregateResult', data);
+            } catch (error) {
+                showError('aggregateResult', '请求失败: ' + error.message);
+            }
+        }
+
+        // IoT 演示
+        async function runIoTDemo() {
+            const sensors = document.getElementById('sensorCount').value;
+            const readings = document.getElementById('readingCount').value;
+            showLoading('iotResult');
+            try {
+                const response = await fetch(`/api/stream/demo/iot?sensors=${sensors}&readings=${readings}`);
+                const data = await response.json();
+                showResult('iotResult', data);
+            } catch (error) {
+                showError('iotResult', '请求失败: ' + error.message);
+            }
+        }
+
+        // 自定义处理
+        async function runCustomProcess() {
+            const dataText = document.getElementById('customData').value;
+            let data;
+            
+            try {
+                data = JSON.parse(dataText || '[]');
+            } catch (e) {
+                showError('customResult', 'JSON 格式错误: ' + e.message);
+                return;
+            }
+
+            showLoading('customResult');
+            try {
+                const response = await fetch('/api/stream/process', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                showResult('customResult', result);
+            } catch (error) {
+                showError('customResult', '请求失败: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
