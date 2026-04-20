@@ -366,22 +366,44 @@
         // 显示加载动画
         function showLoading(elementId) {
             const element = document.getElementById(elementId);
-            element.innerHTML = '<div class="loading show"><div class="spinner"></div><p>处理中...</p></div>';
+            // 保留原有的结构，只更新内容区域
             element.style.display = 'block';
+            let jsonDisplay = element.querySelector('.json-display');
+            if (!jsonDisplay) {
+                // 如果结构被之前的错误破坏了，重建它
+                element.innerHTML = `
+                    <h3>处理结果</h3>
+                    <div class="json-display"></div>
+                `;
+                jsonDisplay = element.querySelector('.json-display');
+            }
+            jsonDisplay.innerHTML = '<div class="loading show"><div class="spinner"></div><p>处理中...</p></div>';
         }
 
         // 显示结果
         function showResult(elementId, data) {
             const element = document.getElementById(elementId);
-            element.querySelector('.json-display').textContent = JSON.stringify(data, null, 2);
             element.style.display = 'block';
+            let jsonDisplay = element.querySelector('.json-display');
+            if (!jsonDisplay) {
+                // 重建结构
+                element.innerHTML = `
+                    <h3>处理结果</h3>
+                    <div class="json-display"></div>
+                `;
+                jsonDisplay = element.querySelector('.json-display');
+            }
+            jsonDisplay.textContent = JSON.stringify(data, null, 2);
         }
 
         // 显示错误
         function showError(elementId, message) {
             const element = document.getElementById(elementId);
-            element.innerHTML = `<div class="error">❌ ${message}</div>`;
             element.style.display = 'block';
+            element.innerHTML = `
+                <h3>处理结果</h3>
+                <div class="error">❌ ${message}</div>
+            `;
         }
 
         // 加载引擎状态
